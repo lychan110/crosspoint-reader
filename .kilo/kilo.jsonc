@@ -1,0 +1,56 @@
+{
+	"$schema": "https://app.kilo.ai/config.json",
+	"snapshot": true,
+	"watcher": {
+		"ignore": [
+			"tmp/**",
+			"logs/**",
+			"node_modules/**",
+			".build/**",
+			"dist/**",
+			".git/**"
+		]
+	}
+	"permission": {
+		"grep *": "deny",
+		"glob *": "deny",
+		"find *": "deny",
+		"read": {
+			"*": "allow",
+			"*.env": "deny",
+			"*.env.*": "deny",
+			"*.env.example": "allow"
+		},
+		"bash": {
+			"*": "ask",
+			"git *": "allow",
+			"git commit *": "allow",
+			"git push *": "ask",
+			"grep *": "deny",
+			"glob *": "deny",
+			"uv *": "allow",
+			"conda *": "deny",
+			"pip *": "deny",
+			"code *": "deny",
+			"head *": "allow",
+			"tail *": "allow",
+			"wc *": "allow",
+			"python -m py_compile *": "allow",
+			"ls *": "allow",
+			"echo *": "allow",
+			"npm *": "allow",
+			"pnpm *": "allow",
+			"find *": "deny"
+		},
+		"write": "allow",
+		"edit": "allow",
+		"webfetch": "allow",
+		"websearch": "allow",
+		"skill": "allow",
+		"todoread": "allow",
+		"todowrite": "allow",
+		"question": "allow",
+		"task": "allow",
+		"lsp": "allow"
+	}
+}
