@@ -1,17 +1,8 @@
-# CrossPoint × Rainmaker (X4 Sync Fork)
+# CrossPoint Firmware Fork for Rainmaker X4 Sync
 
-> **Fork of [crosspoint-reader/crosspoint-reader](https://github.com/crosspoint-reader/crosspoint-reader).**
-> This branch (`rainmaker-sync`) adds autonomous Rainmaker dashboard sync to the Xteink X4 / X3 — no phone bridge, just a VPS-served BMP and a timer wake. All upstream CrossPoint features (EPUB reader, fonts, sleep screens, web UI, OTA, etc.) are preserved.
+This is a fork of the [CrossPoint Reader firmware](https://github.com/crosspoint-reader/crosspoint-reader) with minimal modifications that let an ESP32-based e-ink device (X4 / X3) pull a pre-rendered Rainmaker dashboard from a VPS and use it as a deterministic sleep screen — with no phone bridge.
 
-[![Upstream](https://img.shields.io/badge/upstream-crosspoint--reader-blue)](https://github.com/crosspoint-reader/crosspoint-reader)
-[![Rainmaker](https://img.shields.io/badge/dashboard-rainmaker-orange)](https://github.com/lychan110/rainmaker)
-[![Branch](https://img.shields.io/badge/branch-rainmaker--sync-success)]()
-
-## What is this?
-
-A minimal, rebase-friendly fork that lets an Xteink X4 / X3 fetch a pre-rendered Rainmaker dashboard (`manifest.json` + `latest.bmp`) from a VPS over HTTPS, cache the BMP on SD, and use it as a deterministic sleep screen. The device wakes on a timer during a configurable window (fixed hours or solar), syncs if the manifest changed, then goes back to deep sleep.
-
-**Rainmaker remains the canonical renderer and publisher.** The firmware only consumes the static artifacts — it does not render widgets. CrossPoint's own reader engine, sleep screens, and settings UI are untouched.
+All Rainmaker work lives on a single topic branch (`rainmaker-sync`) for painless rebases onto upstream `develop`. CrossPoint's own rendering pipeline, books, and settings UI stay untouched. Rainmaker remains the canonical renderer and publisher; the firmware only consumes `manifest.json` + `latest.bmp`.
 
 ## Intent
 
@@ -24,13 +15,13 @@ A minimal, rebase-friendly fork that lets an Xteink X4 / X3 fetch a pre-rendered
 ## Repository Setup
 
 ```bash
-git clone https://github.com/lychan110/crosspoint-reader.git crosspoint-rainmaker
-cd crosspoint-rainmaker
+git clone https://github.com/crosspoint-reader/crosspoint-reader.git crosspoint-rainmaker
 git remote rename origin upstream
-git remote add origin https://github.com/lychan110/crosspoint-reader.git
+git remote add origin <your-fork-or-private-repo-url>
 git fetch upstream
 git checkout upstream/develop
 git checkout -b rainmaker-sync
+git push -u origin rainmaker-sync
 ```
 
 Ongoing sync with upstream:
@@ -40,6 +31,8 @@ git fetch upstream
 git rebase upstream/develop
 git push --force-with-lease origin rainmaker-sync
 ```
+
+Keep all Rainmaker work in this fork. Do not vendor Rainmaker into the firmware repo.
 
 ## File Layout
 
@@ -217,15 +210,15 @@ Manual sync never sleeps the device automatically.
 
 ### Prerequisites
 
-- [PlatformIO Core](https://platformio.org/install/cli) (or PlatformIO IDE)
+- PlatformIO Core or PlatformIO IDE
 - ESP32-S3 dev board (X4) or ESP32 (X3)
 - USB cable for flashing
 
 ### Build
 
 ```bash
-git clone https://github.com/lychan110/crosspoint-reader.git
-cd crosspoint-reader
+git clone <repo-url>
+cd crosspoint-rainmaker
 git checkout rainmaker-sync
 pio run                  # build
 pio run --target upload  # flash
@@ -272,15 +265,3 @@ Incremental — each milestone is independently testable:
 - BMP download truncates → byte-count mismatch, `DownloadFailed`, no replace
 - SHA-256 mismatch → `HashMismatch`, tmp deleted, cache preserved
 - Scheduled run below battery threshold → `LowBattery`, no Wi-Fi attempt
-
-## Credits & Provenance
-
-- **Upstream:** [crosspoint-reader/crosspoint-reader](https://github.com/crosspoint-reader/crosspoint-reader) — all reader, network, and HAL code is theirs
-- **Device:** [Xteink X4 / X3](https://www.xteink.com/) — ESP32-S3 / ESP32 e-ink hardware
-- **Dashboard:** [Rainmaker](https://github.com/lychan110/rainmaker) — canonical renderer and VPS publisher
-
-This fork is **not affiliated with CrossPoint Reader, Xteink, or any device manufacturer**.
-
-## License
-
-Same as upstream CrossPoint Reader — see `LICENSE` in this repo.
