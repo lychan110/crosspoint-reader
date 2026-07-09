@@ -15,8 +15,13 @@
 #include <SPI.h>
 #include <WiFi.h>
 #include <builtinFonts/all.h>
+#include <esp_sleep.h>
 
 #include <cstring>
+
+#include "rainmaker/RainmakerSchedule.h"
+#include "rainmaker/RainmakerSyncService.h"
+#include "rainmaker/RainmakerSyncState.h"
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -233,6 +238,35 @@ static bool loadSleepFrameBuffer() {
   return true;
 }
 
+// Arm the Rainmaker timer wakeup for the next scheduled sync, in addition to
+// the power-button GPIO wakeup that startDeepSleep() configures. No-op when
+// the user hasn't enabled Rainmaker sync. Always safe to call: a zero delay
+// or out-of-window result simply leaves the timer disarmed.
+static void armRainmakerTimerWake() {
+  if (!SETTINGS.rainmakerSyncEnabled) return;
+
+  uint32_t delaySeconds = 0;
+  if (halClock.isAvailable()) {
+    uint8_t hour = 0, minute = 0;
+    if (halClock.getTime(hour, minute)) {
+      const uint16_t nowLocal = rainmaker::utcHmToLocalMinutes(hour, minute, SETTINGS.clockUtcOffsetQ);
+      rainmaker::RainmakerSyncState state;
+      rainmaker::loadState(state);
+      delaySeconds = rainmaker::nextDelaySeconds(
+          nowLocal, SETTINGS.rainmakerIntervalMinutes, SETTINGS.rainmakerStartMode, SETTINGS.rainmakerEndMode,
+          rainmaker::quantaToMinutes(SETTINGS.rainmakerStartMinutes),
+          rainmaker::quantaToMinutes(SETTINGS.rainmakerEndMinutes), state.sunriseLocalMinutes, state.sunsetLocalMinutes);
+    }
+  }
+  if (delaySeconds == 0) {
+    delaySeconds = rainmaker::fallbackDelaySeconds(SETTINGS.rainmakerIntervalMinutes);
+  }
+  // ESP-IDF accepts a uint64_t microsecond count. delaySeconds is at most
+  // ~24h+24h = 172800; multiplying stays well within uint64_t range.
+  esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(delaySeconds) * 1000000ULL);
+  LOG_DBG("RMK", "Armed timer wake in %u s", static_cast<unsigned>(delaySeconds));
+}
+
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
@@ -264,6 +298,10 @@ void enterDeepSleep(bool fromTimeout = false) {
 
   halTiltSensor.deepSleep();
   display.deepSleep();
+  // Rainmaker timer wake — additive to the power-button GPIO that
+  // startDeepSleep() arms next. Must happen between display.deepSleep() and
+  // startDeepSleep() so the wakeup mask is set before esp_deep_sleep_start().
+  armRainmakerTimerWake();
   LOG_DBG("MAIN", "Entering deep sleep");
 
   powerManager.startDeepSleep(gpio);
@@ -352,6 +390,29 @@ void setup() {
   OPDS_STORE.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
+
+  // Rainmaker timer wake: do the scheduled sync and return to deep sleep
+  // without ever showing the boot screen. This is the cheap fast path that
+  // runs whenever the user has enabled Rainmaker sync and the previous
+  // enterDeepSleep() armed a timer wakeup.
+  if (SETTINGS.rainmakerSyncEnabled &&
+      esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+    LOG_INF("RMK", "Timer wake — running scheduled sync");
+    const auto result = rainmaker::sync(rainmaker::RainmakerSyncMode::Scheduled);
+    LOG_INF("RMK", "Scheduled sync done: status=%d changed=%d", static_cast<int>(result.status),
+            result.changed ? 1 : 0);
+    // Re-arm the timer for the next interval. The previous boot's
+    // enterDeepSleep() armed it; we just recompute after the sync ran.
+    armRainmakerTimerWake();
+    // Tear down WiFi before sleep (the sync already did this, but be safe).
+    if (WiFi.getMode() != WIFI_MODE_NULL) {
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+    }
+    display.deepSleep();
+    LOG_DBG("MAIN", "Timer-wake sync complete, returning to deep sleep");
+    powerManager.startDeepSleep(gpio);
+  }
 
   const auto wakeupReason = gpio.getWakeupReason();
   switch (wakeupReason) {
