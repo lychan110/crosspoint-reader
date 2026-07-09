@@ -4,10 +4,10 @@
 
 namespace {
 
-using rainmaker::nextDelaySeconds;
-using rainmaker::utcHmToLocalMinutes;
 using rainmaker::fallbackDelaySeconds;
+using rainmaker::nextDelaySeconds;
 using rainmaker::quantaToMinutes;
+using rainmaker::utcHmToLocalMinutes;
 
 constexpr uint8_t MODE_FIXED = 0;
 constexpr uint8_t MODE_SOLAR = 1;
@@ -59,8 +59,7 @@ TEST(RainmakerSchedule, SolarMode_FixedFallback) {
 TEST(RainmakerSchedule, InvalidWindow_FallsBack) {
   // fixedStart=1200, fixedEnd=600 (start >= end) -> falls back to 08:00-22:00.
   // now=1400 (after 22:00) -> (1440-1400)*60 + 480*60 = 40*60 + 28800 = 31200.
-  EXPECT_EQ(nextDelaySeconds(1400, 60, MODE_FIXED, MODE_FIXED, 1200, 600, -1, -1),
-            static_cast<uint32_t>(31200));
+  EXPECT_EQ(nextDelaySeconds(1400, 60, MODE_FIXED, MODE_FIXED, 1200, 600, -1, -1), static_cast<uint32_t>(31200));
 }
 
 TEST(RainmakerSchedule, UtcHmToLocalMinutes_WrapsNegative) {

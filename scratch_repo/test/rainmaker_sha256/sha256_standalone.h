@@ -1,9 +1,9 @@
 #pragma once
 
-#include "rainmaker/Sha256.h"
-
 #include <cstddef>
 #include <cstdint>
+
+#include "rainmaker/Sha256.h"
 
 namespace rainmaker {
 namespace backend {

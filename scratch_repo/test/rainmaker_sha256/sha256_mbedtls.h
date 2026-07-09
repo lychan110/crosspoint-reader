@@ -1,8 +1,8 @@
 #pragma once
 
-#include "sha256_backend.h"
-
 #include <mbedtls/sha256.h>
+
+#include "sha256_backend.h"
 
 namespace rainmaker {
 namespace backend {

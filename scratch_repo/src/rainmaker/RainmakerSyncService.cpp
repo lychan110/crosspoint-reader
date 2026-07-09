@@ -163,8 +163,7 @@ RainmakerSyncResult sync(RainmakerSyncMode mode) {
     return true;
   };
   if (!HttpDownloader::fetchUrl(url, cb, user, pass) || overflow) {
-    setResult(r, RainmakerSyncStatus::ManifestFetchFailed,
-              overflow ? "manifest too large" : "manifest fetch failed");
+    setResult(r, RainmakerSyncStatus::ManifestFetchFailed, overflow ? "manifest too large" : "manifest fetch failed");
     teardownWifi();
     return r;
   }

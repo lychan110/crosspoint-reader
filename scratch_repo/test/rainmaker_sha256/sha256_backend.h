@@ -1,9 +1,9 @@
 #pragma once
 
-#include "rainmaker/Sha256.h"
-
 #include <cstddef>
 #include <cstdint>
+
+#include "rainmaker/Sha256.h"
 
 namespace rainmaker {
 namespace backend {
@@ -25,5 +25,6 @@ bool compute(const uint8_t* data, std::size_t len, uint8_t out[Sha256::DIGEST_BY
 #elif defined(HOST_SHA256_USE_STANDALONE)
 #include "sha256_standalone.h"
 #else
-#error "No SHA-256 backend selected. Define HOST_SHA256_USE_MBEDTLS, HOST_SHA256_USE_OPENSSL, or HOST_SHA256_USE_STANDALONE."
+#error \
+    "No SHA-256 backend selected. Define HOST_SHA256_USE_MBEDTLS, HOST_SHA256_USE_OPENSSL, or HOST_SHA256_USE_STANDALONE."
 #endif
