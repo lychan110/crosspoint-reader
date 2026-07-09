@@ -19,10 +19,6 @@
 
 #include <cstring>
 
-#include "rainmaker/RainmakerSchedule.h"
-#include "rainmaker/RainmakerSyncService.h"
-#include "rainmaker/RainmakerSyncState.h"
-
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "KOReaderCredentialStore.h"
@@ -36,6 +32,9 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
+#include "rainmaker/RainmakerSchedule.h"
+#include "rainmaker/RainmakerSyncService.h"
+#include "rainmaker/RainmakerSyncState.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -252,10 +251,11 @@ static void armRainmakerTimerWake() {
       const uint16_t nowLocal = rainmaker::utcHmToLocalMinutes(hour, minute, SETTINGS.clockUtcOffsetQ);
       rainmaker::RainmakerSyncState state;
       rainmaker::loadState(state);
-      delaySeconds = rainmaker::nextDelaySeconds(
-          nowLocal, SETTINGS.rainmakerIntervalMinutes, SETTINGS.rainmakerStartMode, SETTINGS.rainmakerEndMode,
-          rainmaker::quantaToMinutes(SETTINGS.rainmakerStartMinutes),
-          rainmaker::quantaToMinutes(SETTINGS.rainmakerEndMinutes), state.sunriseLocalMinutes, state.sunsetLocalMinutes);
+      delaySeconds = rainmaker::nextDelaySeconds(nowLocal, SETTINGS.rainmakerIntervalMinutes,
+                                                 SETTINGS.rainmakerStartMode, SETTINGS.rainmakerEndMode,
+                                                 rainmaker::quantaToMinutes(SETTINGS.rainmakerStartMinutes),
+                                                 rainmaker::quantaToMinutes(SETTINGS.rainmakerEndMinutes),
+                                                 state.sunriseLocalMinutes, state.sunsetLocalMinutes);
     }
   }
   if (delaySeconds == 0) {
@@ -395,8 +395,7 @@ void setup() {
   // without ever showing the boot screen. This is the cheap fast path that
   // runs whenever the user has enabled Rainmaker sync and the previous
   // enterDeepSleep() armed a timer wakeup.
-  if (SETTINGS.rainmakerSyncEnabled &&
-      esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+  if (SETTINGS.rainmakerSyncEnabled && esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
     LOG_INF("RMK", "Timer wake — running scheduled sync");
     const auto result = rainmaker::sync(rainmaker::RainmakerSyncMode::Scheduled);
     LOG_INF("RMK", "Scheduled sync done: status=%d changed=%d", static_cast<int>(result.status),
