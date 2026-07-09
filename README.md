@@ -34,9 +34,17 @@ git checkout rainmaker-sync
 ## BUILD
 
 ```bash
-pio run                        # build
+./bin/install-deps.sh          # one-shot: PlatformIO, clang-format 21, Python deps, submodules
+./bin/pio run -e gh_release    # build release firmware.bin + bootloader.bin + partitions.bin
+./bin/pio check                # static analysis (cppcheck)
+ctest --test-dir build/test --output-on-failure -j   # host unit tests
 ./bin/clang-format-fix         # before commit (required)
 ```
+
+Full build & flash guide (including how to roll back to a previous
+firmware and recover from a bad flash) is in
+[`docs/build-and-flash.md`](docs/build-and-flash.md). Cloud-agent
+sandbox gotchas are in [`docs/ci-and-sandbox.md`](docs/ci-and-sandbox.md).
 
 ## FILE LAYOUT
 
