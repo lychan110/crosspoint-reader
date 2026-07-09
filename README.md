@@ -31,14 +31,35 @@ git remote add origin https://github.com/lychan110/crosspoint-reader.git
 git fetch upstream
 git checkout upstream/develop
 git checkout -b rainmaker-sync
+git push -u origin rainmaker-sync
 ```
+
+## Branch Structure (strict — read first)
+
+| Branch | Purpose | Commits allowed? |
+|---|---|---|
+| `upstream/develop` | Read-only mirror of crosspoint-reader/crosspoint-reader | No — fetch only |
+| `origin/develop` | **Mirror of upstream.** Must stay byte-for-byte equal to `upstream/develop`. Default branch. | **Never.** Direct pushes are blocked. Only `git push --force-with-lease origin develop` from a freshly rebased local clone is permitted, and only to re-sync with upstream. |
+| `rainmaker-sync` | All Rainmaker work: `src/rainmaker/`, docs, agent config, CI. Force-pushable with `--force-with-lease` after rebase. | **Yes — the only branch that takes commits.** |
+
+**Rule:** if you are about to commit and you are on `develop` — stop, switch to `rainmaker-sync`. The only exception is the deliberate force-push that re-syncs `develop` to upstream; that one operation is the whole point of the branch.
 
 Ongoing sync with upstream:
 
 ```bash
+git checkout rainmaker-sync
 git fetch upstream
 git rebase upstream/develop
 git push --force-with-lease origin rainmaker-sync
+```
+
+To re-sync `develop` to upstream (rare, do this only when `develop` has drifted or after a fork setup):
+
+```bash
+git checkout develop
+git fetch upstream
+git reset --hard upstream/develop
+git push --force-with-lease origin develop
 ```
 
 ## File Layout

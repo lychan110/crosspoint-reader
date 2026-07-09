@@ -29,6 +29,24 @@ This is a **rebase-friendly fork** of [crosspoint-reader/crosspoint-reader](http
 
 If a tool, subagent, or CI workflow proposes pushing to `upstream`, refuse and re-target to `origin`.
 
+### 1a. Branch structure is sacred — `develop` ≠ `rainmaker-sync`
+
+The fork uses a strict two-branch model. Violating this is the same class of bug as pushing to upstream.
+
+| Branch | Purpose | Commits to it? | Default? |
+|---|---|---|---|
+| `upstream/develop` (read-only) | Tracks crosspoint-reader/crosspoint-reader | No — fetch only | n/a |
+| `origin/develop` | **Mirror of upstream.** Must byte-for-byte match `upstream/develop` between syncs. | **Never commit here.** PRs that would land on `develop` belong on `rainmaker-sync`. | **Yes** (kept for upstream compatibility) |
+| `rainmaker-sync` | All Rainmaker work: code, docs, agent config, workflow files. | **Only branch that accepts commits.** Force-pushable (with `--force-with-lease`) only after rebase. | No |
+
+**Why `develop` is still the default:** the fork's `develop` is a clean mirror of `upstream/develop`. Keeping it as the default avoids confusing visitors who land on the repo — they see upstream, not our customizations. All real work happens off `rainmaker-sync`.
+
+**Branch protection (origin/develop):** `develop` on the fork is branch-protected. Direct pushes are rejected; the only path to update it is `git push --force-with-lease origin develop` from a local clone that was just rebased onto `upstream/develop`. This is intentional — the force-push is the one operation that re-syncs `develop` to upstream, and it must be deliberate, not accidental.
+
+**Pre-commit guard (any branch, local or CI):** if the working tree contains a file outside `src/rainmaker/`, `docs/`, `AGENTS.md`, `CONTEXT.md`, `.kilo/`, `.github/`, `bin/`, `.cbmignore`, `.env.example`, `.ignore`, or `README.md` that is not a direct upstream file, **stop and ask the user**. This is a structural change, not a Rainmaker feature.
+
+**`rainmaker-sync` is force-pushable** because the whole point is to rebase it. The lease guard (never bare `--force`) prevents stomping on a concurrent push.
+
 ### 2. Rebase discipline — the headline rule
 
 The whole point of this fork is that it stays a clean topic branch on top of upstream so we can absorb upstream changes cheaply. The rebase is the cost of doing business.
@@ -189,3 +207,16 @@ git push --force-with-lease origin rainmaker-sync
 6. `uname -s` — detect host platform per `.skills/SKILL.md`.
 7. Read the handoff's "Build Milestones" section to know which milestone is current.
 8. Only then start.
+
+---
+
+## Why the branches were separated (post-mortem on the first PR)
+
+The initial PR#1 (commit `b1c2d649`) merged the rainmaker-sync work directly into the fork's `develop`. This was wrong: it meant `develop` no longer mirrored upstream, so `git fetch upstream && git rebase upstream/develop` was no longer a valid rebase — it would have been a merge of diverging histories. The customizations were effectively locked in at the tip of `develop`, defeating the point of the fork.
+
+**Corrected structure (as of the branch fix):**
+- `origin/develop` was force-reset to `a4306130` (the last commit that matches `upstream/develop` at the time of the fix).
+- `rainmaker-sync` was created at the previous `develop` tip (`b1c2d649`), carrying all the customizations.
+- A pre-commit guard was added so future contributors cannot accidentally re-introduce the same mistake: any commit that lands on `develop` directly is a violation of rule 1a.
+
+If you find yourself about to commit on `develop` — even a "tiny" doc fix — stop, switch to `rainmaker-sync`, and commit there.
