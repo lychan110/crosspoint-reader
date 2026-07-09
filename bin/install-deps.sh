@@ -21,9 +21,12 @@ SHARED_CACERT_SRC="/etc/ssl/certs/ca-certificates.crt"
 #    python3-pip       -> platformio, clang-format pip wheel
 #    python3.10-venv  -> required by PlatformIO's penv on jammy
 #    git              -> already present, included for completeness
+#    g++              -> host test builds (cmake + GoogleTest)
+#    cmake            -> host test builds
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
-    python3-pip python3.10-venv git ca-certificates
+    python3-pip python3.10-venv git ca-certificates \
+    g++ cmake
 
 # 2. Python packages via pip.
 #    PlatformIO Core CLI
@@ -64,4 +67,3 @@ Next steps:
   export PLATFORMIO_CORE_DIR="${PLATFORMIO_CORE_DIR}"
   pio run -e default    # build the default env
   ./bin/clang-format-fix
-EOF
