@@ -1,184 +1,144 @@
-# Rainmaker Production Audit & Fix Plan
+# Rainmaker Production Readiness Plan
 
 ## Goal
-Fix all bugs, resolve build blockers, verify the firmware compiles, add host-side unit tests, and ensure the fork is production-ready for flashing.
+Make the CrossPoint × Rainmaker fork buildable, testable, and safe to flash as a release candidate. Do not call it production-ready until the required hardware smoke checklist passes on a real Xteink device.
 
-## Task List
+## Key Decisions
+- Host-side unit tests are required for portable Rainmaker logic only; avoid brittle HAL/Arduino host mocks unless a clean shim already exists.
+- `gh_release` is the flash-candidate build; `default` must also compile to catch dev/release differences.
+- A manual on-device smoke checklist is a hard safe-to-flash gate.
+- Cache replacement must preserve the last known-good dashboard on every failure.
+- Manifest fetch/parsing must be bounded and strict: no unbounded body buffering and no silently accepted truncation.
 
-### Phase 1: Fix Critical Bugs
+## Phase 1 — Repository and Environment Sanity
+- [ ] Confirm current branch and move work onto `rainmaker-sync` before further fixes.
+  - Current observed branch was `session/agent_880f91cb-9038-4b40-bd29-e783b55c21bf`, which violates `CONTEXT.md`.
+  - Fast-forward or cherry-pick the Rainmaker commits onto `rainmaker-sync`; do not commit on the session branch.
+- [ ] Initialize/update `freeink-sdk` submodule.
+  - The workspace contradicted the summary: `freeink-sdk/` was empty.
+- [ ] Set a writable PlatformIO core dir for this sandbox/session:
+  - `export PLATFORMIO_CORE_DIR="$PWD/.pio-platformio"`
+- [ ] Resolve `tool-scons` without disabling TLS globally.
+  - Preferred: install from the already-downloaded tarball into the PlatformIO package store with a valid `package.json` (`name: tool-scons`, `version: 4.40801.0`).
+  - Then let PlatformIO resolve remaining project deps normally.
 
-- [ ] **1.1 Fix `const` compile error in RainmakerManifest.cpp:129,136**
-  File: `src/rainmaker/RainmakerManifest.cpp`
-  Change `const long long v = ...` to `long long v = ...` on lines 129 and 136.
-  The `const` qualifier prevents `v = 0` assignment on the next line — this is a hard compile error.
+## Phase 2 — Must-Fix Compile and Runtime Bugs
+- [ ] Fix hard compile error in `src/rainmaker/RainmakerManifest.cpp:129` and `:136`.
+  - Change reassigned `const long long v` variables to non-const.
+- [ ] Add the explicit time include for `time(nullptr)` in `src/rainmaker/RainmakerSyncService.cpp:168`.
+- [ ] Load Wi-Fi credentials in the sync path.
+  - `connectToSavedWifi()` must call `WIFI_STORE.loadFromFile()` before reading `getLastConnectedSsid()` / credentials.
+  - This makes manual and timer sync independent of whichever UI activity happened to load credentials.
+- [ ] Remove or guard `display.deepSleep()` in the timer-wake fast path at `src/main.cpp:411`.
+  - Timer wake does not initialize the display; the fast path should sync, re-arm timer wake, shut down Wi-Fi, and enter deep sleep.
 
-- [ ] **1.2 Add missing `#include <time.h>` to RainmakerSyncService.cpp**
-  File: `src/rainmaker/RainmakerSyncService.cpp`
-  Add `#include <time.h>` in the include block (line 9-10). `time(nullptr)` at line 168 needs this declaration.
+## Phase 3 — Make Sync Fail-Safe
+- [ ] Replace remove-then-rename cache flow in `src/rainmaker/RainmakerSyncService.cpp:237-246`.
+  - Required safe flow:
+    1. Verify `latest.tmp` byte count and SHA-256.
+    2. If `latest.bmp` exists, rename it to `latest.bak`.
+    3. Rename `latest.tmp` to `latest.bmp`.
+    4. If that fails, restore `latest.bak` to `latest.bmp`.
+    5. Delete `latest.bak` only after success.
+  - Result: the last known-good dashboard remains available after every failure.
+- [ ] Set useful `state.lastError` before `saveState(state)` on failures.
+  - Not required for correctness, but important for diagnosis after unattended timer wakes.
 
-### Phase 2: Fix Branch Alignment
+## Phase 4 — Bound Manifest Fetch and Validation
+- [ ] Stop using unbounded `HttpDownloader::fetchUrl(url, std::string&)` for the manifest.
+  - Use `HttpDownloader::fetchUrl(url, DataCallback, user, pass)` from `src/network/HttpDownloader.h:38`.
+  - Accumulate into a fixed capped buffer, e.g. 2048 bytes including NUL.
+  - Abort and return `ManifestFetchFailed` or `ManifestInvalid` if the response exceeds the cap.
+- [ ] Reject any truncation of required manifest strings.
+  - `copyBounded()` already detects truncation in `src/rainmaker/RainmakerManifest.cpp:32-40`; callers must check it.
+  - Required fields (`sha256`, `bmpUrl`, dimensions, bytes, version) must fail validation if too long, missing, or wrong type.
+  - A too-long SHA-256 must not be truncated to 64 chars and accepted.
+- [ ] Handle JSON parse OOM explicitly.
+  - If ArduinoJson reports `NoMemory`, return the existing `ERR_OOM` path or equivalent.
 
-- [ ] **2.1 Switch to `rainmaker-sync` branch**
-  The current HEAD is on `session/agent_880f91cb-9038-4b40-bd29-e783b55c21bf`. Per CONTEXT.md, all work must live on `rainmaker-sync`.
-  ```bash
-  git stash                     # stash any uncommitted changes
-  git checkout rainmaker-sync   # switch to correct branch
-  git merge --ff-only session/agent_880f91cb-9038-4b40-bd29-e783b55c21bf  # fast-forward rainmaker-sync
-  ```
-  If not fast-forwardable, cherry-pick the rainmaker commits (4d2e121, 81ff9a9, 3fd8e9d, 82681f1, 3f03bbd).
-
-### Phase 3: Resolve Build Blockers
-
-- [ ] **3.1 Manually install tool-scons**
-  The tarball exists at `/tmp/agent_2cb6eb6c-e17e-4118-9efe-498ea8ff9ab4/tool-scons.tar.gz`.
-  Create `~/.platformio/packages/tool-scons/` with proper `package.json`:
-  ```json
-  {
-    "name": "tool-scons",
-    "version": "4.40801.0",
-    "description": "SCons software construction tool"
-  }
-  ```
-  Extract the tarball contents into that directory. PlatformIO recognizes pre-installed packages by their `package.json` manifest.
-
-- [ ] **3.2 Set PLATFORMIO_CORE_DIR**
-  The sandbox environment requires `PLATFORMIO_CORE_DIR` to be a writable path.
-  ```bash
-  export PLATFORMIO_CORE_DIR="${PWD}/.pio-platformio"
-  ```
-  This is already documented in `bin/install-deps.sh`.
-
-- [ ] **3.3 Run `pio run -e default`**
-  Attempt the full build. If scons-using platform packages are already cached and recognized, the build should proceed. The project-local deps (ArduinoJson, QRCode, PNGdec, JPEGDEC, WebSockets) will be downloaded by the SCons build.
-
-### Phase 4: Build Verification
-
-- [ ] **4.1 Verify compilation succeeds**
-  Run `pio run -e default`. Fix any additional compilation errors that surface.
-
-- [ ] **4.2 Run clang-format check**
-  ```bash
-  ./bin/clang-format-fix
-  ```
-  Verify no files are reformatted.
-
-- [ ] **4.3 Run gen_i18n.py**
-  ```bash
-  python3 scripts/gen_i18n.py
-  ```
-  Verify no errors. The 33 rainmaker i18n strings are already in `english.yaml`.
-
-### Phase 5: Host-Side Unit Tests
-
-The existing test framework uses `gtest` via CMake FetchContent. Tests live in `test/` and are built/run with:
+## Phase 5 — Host-Side Tests
+Use existing host test flow from `test/README`:
 ```bash
-cmake -S test -B build/test && cmake --build build/test && ctest --test-dir build/test --output-on-failure
+cmake -S test -B build/test
+cmake --build build/test
+ctest --test-dir build/test --output-on-failure -j
 ```
 
-- [ ] **5.1 RainmakerManifest parser tests**
-  New file: `test/rainmaker_manifest/RainmakerManifestTest.cpp`
-  Test cases:
-  - Valid manifest parses all fields correctly
-  - Missing required field (sha256, bytes, bmpUrl) → parse fails
-  - Invalid version (not 1) → validate fails
-  - Wrong dimensions (not 480x800) → validate fails
-  - Non-hex SHA-256 → validate fails
-  - Truncated strings (URL longer than 192 chars) → bounded copy
-  - Optional solar minutes present → parsed correctly
-  - Optional solar minutes absent → -1 sentinel
-  - Empty/null JSON → parse fails
+- [ ] Add portable tests for `RainmakerSchedule`.
+  - Before window → delay to start.
+  - In window → interval delay.
+  - After window → next-day start.
+  - Interval crossing end → next-day start.
+  - Solar times present → use solar bounds.
+  - Solar times absent → fixed fallback.
+  - Invalid start/end → 08:00–22:00 fallback.
+  - `utcHmToLocalMinutes()` offset wrapping.
+  - `fallbackDelaySeconds()` clamps to 5 minutes.
+- [ ] Add portable tests for `Sha256::hashBuffer()` and `equalsHex()`.
+  - Empty-string SHA-256 known vector.
+  - Case-insensitive compare.
+  - Mismatch and null-pointer rejection.
+- [ ] Add manifest parser tests only if ArduinoJson can be cleanly included in the host CMake target.
+  - Valid manifest.
+  - Missing required fields.
+  - Wrong version.
+  - Wrong dimensions.
+  - Invalid or too-long SHA-256.
+  - Overlong `bmpUrl` rejected.
+  - Optional solar times present/absent.
+- [ ] Do not add fragile host tests for `RainmakerSyncState`/SD persistence unless a clean `HalStorage`/Arduino `String` shim already exists.
+  - Cover SD persistence in the hardware smoke checklist instead.
 
-- [ ] **5.2 Sha256 tests**
-  New file: `test/rainmaker_sha256/Sha256Test.cpp`
-  Test cases:
-  - Known-answer test vector (e.g. empty string → e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)
-  - hashBuffer produces correct lowercase hex
-  - equalsHex case-insensitive comparison
-  - equalsHex rejects mismatched strings
-  - equalsHex rejects null pointers
-  - hashFile on nonexistent path returns false
+## Phase 6 — Build and Static Validation Gates
+- [ ] Run formatting and i18n generation:
+```bash
+./bin/clang-format-fix
+python3 scripts/gen_i18n.py
+```
+- [ ] Build both required environments:
+```bash
+pio run -e default
+pio run -e gh_release
+```
+- [ ] Treat only `gh_release` output as the flash-candidate artifact.
+- [ ] If available and not over the two-minute command limit, also run focused static checks; otherwise record why they were skipped.
+- [ ] Verify heap/layering discipline in Rainmaker code:
+  - No bare `new` / `new[]`.
+  - No unbounded manifest body allocation.
+  - SD access goes through `Storage` / `HalFile`.
+  - No direct SdFat / raw SDK storage calls.
+  - User-facing strings use `tr(STR_*)`.
+  - `std::string` remains cold-path only.
 
-- [ ] **5.3 RainmakerSchedule tests**
-  New file: `test/rainmaker_schedule/RainmakerScheduleTest.cpp`
-  Test cases:
-  - Before window → delay to start
-  - In window → delay by interval
-  - After window → delay to next day start
-  - Next interval would cross end → delay to next day start
-  - Solar mode with valid sunrise/sunset → uses solar times
-  - Solar mode without cached solar times → falls back to fixed
-  - start >= end → fallback to 08:00-22:00
-  - utcHmToLocalMinutes conversion correctness
-  - fallbackDelaySeconds clamps minimum 5 minutes
+## Phase 7 — Manual Hardware Smoke Gate
+The firmware is only a release candidate until these pass on a real Xteink X4/X3 target.
 
-- [ ] **5.4 RainmakerSyncState tests**
-  New file: `test/rainmaker_sync_state/RainmakerSyncStateTest.cpp`
-  Test cases:
-  - clear() resets all fields to defaults
-  - loadState on missing file returns false, state is cleared
-  - saveState produces valid JSON, loadState round-trips correctly
-  - state paths are correct constants
+- [ ] Flash the `gh_release` artifact.
+- [ ] Boot with Rainmaker disabled; confirm normal CrossPoint UI and reader behavior still works.
+- [ ] Configure Wi-Fi through the existing network UI; reboot; confirm Rainmaker manual sync can use saved credentials.
+- [ ] Configure Rainmaker manifest URL, username, and password.
+- [ ] Manual sync valid manifest: downloads, verifies, and writes `/.crosspoint/rainmaker/latest.bmp`.
+- [ ] Manual sync unchanged manifest: reports already current and does not rewrite cache.
+- [ ] Bad auth / offline server / invalid manifest / SHA mismatch: old `latest.bmp` remains intact and temp files are cleaned.
+- [ ] Rainmaker sleep screen renders cached dashboard.
+- [ ] User can switch sleep screen away from Rainmaker and it is respected.
+- [ ] Timer wake with short interval: wakes, syncs or skips, re-arms, and returns to deep sleep without showing UI.
+- [ ] Power-button wake still opens normal CrossPoint UI.
+- [ ] Low-battery scheduled path skips sync; manual sync remains available.
+- [ ] Solar mode without cached solar times falls back to fixed schedule.
 
-- [ ] **5.5 Add CMakeLists.txt for each new test directory**
-  Each test directory needs a `CMakeLists.txt` following the pattern in `test/release_json_parser/`.
+## Definition of Done
+- Correct branch: `rainmaker-sync`.
+- `freeink-sdk` present.
+- Host portable tests pass.
+- `./bin/clang-format-fix` and `python3 scripts/gen_i18n.py` pass.
+- `pio run -e default` and `pio run -e gh_release` pass.
+- Safe cache replacement, bounded manifest fetch, Wi-Fi credential loading, and timer fast-path cleanup are implemented.
+- Hardware smoke checklist passes before labeling the fork production-ready or safe for routine flashing.
 
-- [ ] **5.6 Build and run all tests**
-  ```bash
-  cmake -S test -B build/test && cmake --build build/test && ctest --test-dir build/test --output-on-failure
-  ```
-
-### Phase 6: Production Readiness Validation
-
-- [ ] **6.1 Verify file allow-list compliance**
-  Check that only files in the CONTEXT.md allow-list are modified:
-  - `src/rainmaker/` — all new rainmaker files ✓
-  - `src/CrossPointSettings.h` — appended fields ✓
-  - `src/SettingsList.h` — appended entries ✓
-  - `src/main.cpp` — timer-wake block only ✓
-  - `src/activities/boot_sleep/SleepActivity.cpp` — RAINMAKER case ✓
-  - `src/activities/settings/SettingsActivity.{h,cpp}` — RainmakerSyncNow action ✓
-  - `lib/I18n/translations/english.yaml` — 33 rainmaker strings ✓
-
-- [ ] **6.2 Verify heap discipline**
-  - No bare `new`/`new[]` in rainmaker code
-  - No `push_back` without `reserve`
-  - No allocations in hot paths
-  - `std::string` on cold paths only (sync service)
-  - All fallible allocations use `new (std::nothrow)` or are avoided
-
-- [ ] **6.3 Verify HAL abstraction compliance**
-  - All SD access uses `Storage` (HalStorage) and `HalFile`
-  - No direct `SdFat`/`FsFile` use
-  - User-facing strings use `tr(STR_*)`
-  - No hardcoded 800/480
-
-- [ ] **6.4 Verify rebase safety**
-  - All new code in `src/rainmaker/`
-  - Upstream files only appended/added to, never reordered
-  - Enum values appended, not inserted
-
-- [ ] **6.5 Verify against handoff spec test matrix**
-  Document which test cases are verified by host-side tests vs. which must be verified on-device:
-  - **Host-side verifiable**: manifest parsing, manifest validation, SHA-256, schedule logic, state persistence
-  - **Device-only (manual)**: manual sync with valid credentials, manual sync skips unchanged, RAINMAKER sleep displays cache, timer wake syncs and returns to sleep, power button wake still works, disable sync, non-Rainmaker sleep mode, low battery skip, no solar times with solar mode
-
-- [ ] **6.6 Commit all fixes**
-  Single commit with all bug fixes and test additions:
-  ```bash
-  git add <changed files>
-  git commit -m "fix(rainmaker): fix compile errors, add host-side unit tests"
-  ```
-
-## Risk Assessment
-
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| `tool-scons` manual install doesn't work | Medium | High | PlatformIO docs confirm manual install via package.json; if it fails, install `scons` via pip and configure PIO to use system scons |
-| Additional compile errors after fixing bugs | Medium | Medium | Iterative: fix each as it surfaces in `pio run` |
-| Project-local deps (ArduinoJson etc.) fail to download | Low | Medium | These are from well-known repos (GitHub, PlatformIO registry); should work once scons is resolved |
-| Host-side tests need mocking of HalStorage | High | Medium | RainmakerSyncState tests need `Storage` mock or file-based test. Use temporary directory for state files in tests. |
-| Sha256 tests need file I/O | Medium | Low | Create temp files in test; `hashFile` tests can use a known content file |
-
-## Open Questions
-
-- Should `rainmakerStartMinutes`/`rainmakerEndMinutes` remain as `uint8_t` quanta (0..239) or be changed to `uint16_t` minutes (0..1439) as the handoff spec originally called for? The quanta approach saves 2 bytes of settings but limits resolution to 6 minutes. Current implementation uses quanta — this is a design decision, not a bug. Recommend keeping as-is unless the 6-minute resolution is insufficient.
+## Explicit Non-Goals
+- Do not refactor unrelated CrossPoint code.
+- Do not make Rainmaker render widgets on-device.
+- Do not vendor Rainmaker into the firmware repo.
+- Do not bypass the HAL for SD/storage access.
+- Do not call the cloud build alone “production-ready”; hardware smoke is mandatory.
