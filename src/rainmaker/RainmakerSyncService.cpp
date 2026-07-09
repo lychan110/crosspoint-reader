@@ -2,7 +2,6 @@
 
 #include <HalPowerManager.h>
 #include <HalStorage.h>
-#include "network/HttpDownloader.h"
 #include <Logging.h>
 #include <WiFi.h>
 
@@ -16,6 +15,7 @@
 #include "RainmakerSyncState.h"
 #include "Sha256.h"
 #include "WifiCredentialStore.h"
+#include "network/HttpDownloader.h"
 
 namespace rainmaker {
 
