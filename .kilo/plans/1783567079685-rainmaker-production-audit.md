@@ -10,12 +10,18 @@ Make the CrossPoint × Rainmaker fork buildable, testable, and safe to flash as 
 - Cache replacement must preserve the last known-good dashboard on every failure.
 - Manifest fetch/parsing must be bounded and strict: no unbounded body buffering and no silently accepted truncation.
 
+## Branching
+
+- Work only on `rainmaker-sync`. Treat it as the default/master branch.
+- `develop` is read-only. Do not commit, merge, or open a PR targeting `develop`.
+- If you ever find yourself on `develop`, run:
+  ```bash
+  git checkout rainmaker-sync
+  ```
+
 ## Phase 1 — Repository and Environment Sanity
-- [ ] Confirm current branch and move work onto `rainmaker-sync` before further fixes.
-  - Current observed branch was `session/agent_880f91cb-9038-4b40-bd29-e783b55c21bf`, which violates `CONTEXT.md`.
-  - Fast-forward or cherry-pick the Rainmaker commits onto `rainmaker-sync`; do not commit on the session branch.
+- [ ] Confirm current branch is `rainmaker-sync` before further fixes.
 - [ ] Initialize/update `freeink-sdk` submodule.
-  - The workspace contradicted the summary: `freeink-sdk/` was empty.
 - [ ] Set a writable PlatformIO core dir for this sandbox/session:
   - `export PLATFORMIO_CORE_DIR="$PWD/.pio-platformio"`
 - [ ] Resolve `tool-scons` without disabling TLS globally.
