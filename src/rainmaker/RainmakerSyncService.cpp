@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <string>
 
 #include "CrossPointSettings.h"
@@ -70,6 +71,7 @@ bool validateConfig(RainmakerSyncResult& r) {
 // tearing it down on failure.
 bool connectToSavedWifi() {
   if (WiFi.status() == WL_CONNECTED) return true;
+  WIFI_STORE.loadFromFile();
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
@@ -145,16 +147,30 @@ RainmakerSyncResult sync(RainmakerSyncMode mode) {
   const std::string user = settingsString(SETTINGS.rainmakerUsername);
   const std::string pass = settingsString(SETTINGS.rainmakerPassword);
 
-  std::string body;
-  if (!HttpDownloader::fetchUrl(url, body, user, pass)) {
-    setResult(r, RainmakerSyncStatus::ManifestFetchFailed, "manifest fetch failed");
+  constexpr size_t MANIFEST_CAP = 2048;
+  char manifestBuf[MANIFEST_CAP];
+  size_t manifestLen = 0;
+  bool overflow = false;
+  auto cb = [&](const uint8_t* data, size_t len) -> bool {
+    if (overflow) return false;
+    if (manifestLen + len + 1 > MANIFEST_CAP) {
+      overflow = true;
+      return false;
+    }
+    std::memcpy(manifestBuf + manifestLen, data, len);
+    manifestLen += len;
+    manifestBuf[manifestLen] = '\0';
+    return true;
+  };
+  if (!HttpDownloader::fetchUrl(url, cb, user, pass) || overflow) {
+    setResult(r, RainmakerSyncStatus::ManifestFetchFailed, overflow ? "manifest too large" : "manifest fetch failed");
     teardownWifi();
     return r;
   }
 
   RainmakerManifest manifest;
   const char* errMsg = nullptr;
-  if (!parseManifest(body.c_str(), body.size(), manifest, errMsg)) {
+  if (!parseManifest(manifestBuf, manifestLen, manifest, errMsg)) {
     char msg[64];
     snprintf(msg, sizeof(msg), "manifest: %s", errMsg ? errMsg : "invalid");
     setResult(r, RainmakerSyncStatus::ManifestInvalid, msg);
@@ -234,16 +250,30 @@ RainmakerSyncResult sync(RainmakerSyncMode mode) {
     return r;
   }
 
-  // Atomic replace: remove old cache, rename tmp -> cache.
+  // Safe replace: bmp -> bak, then tmp -> bmp. Restore on failure.
   if (Storage.exists(RainmakerSyncState::CACHE_BMP)) {
-    Storage.remove(RainmakerSyncState::CACHE_BMP);
+    if (!Storage.rename(RainmakerSyncState::CACHE_BMP, RainmakerSyncState::CACHE_BAK)) {
+      snprintf(state.lastError, sizeof(state.lastError), "cache backup failed");
+      setResult(r, RainmakerSyncStatus::FileError, "cache backup failed");
+      saveState(state);
+      teardownWifi();
+      return r;
+    }
   }
   if (!Storage.rename(RainmakerSyncState::CACHE_TMP, RainmakerSyncState::CACHE_BMP)) {
-    setResult(r, RainmakerSyncStatus::FileError, "rename failed");
-    Storage.remove(RainmakerSyncState::CACHE_TMP);
+    snprintf(state.lastError, sizeof(state.lastError), "cache rename failed");
+    if (Storage.exists(RainmakerSyncState::CACHE_BAK)) {
+      if (!Storage.rename(RainmakerSyncState::CACHE_BAK, RainmakerSyncState::CACHE_BMP)) {
+        snprintf(state.lastError, sizeof(state.lastError), "cache restore failed");
+      }
+    }
+    setResult(r, RainmakerSyncStatus::FileError, state.lastError);
     saveState(state);
     teardownWifi();
     return r;
+  }
+  if (Storage.exists(RainmakerSyncState::CACHE_BAK)) {
+    Storage.remove(RainmakerSyncState::CACHE_BAK);
   }
 
   // Commit successful state.

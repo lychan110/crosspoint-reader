@@ -54,6 +54,7 @@ constexpr const char* ERR_VERSION = "unsupported version";
 constexpr const char* ERR_GEOMETRY = "image must be 480x800";
 constexpr const char* ERR_SHA = "invalid sha256";
 constexpr const char* ERR_OOM = "JSON doc allocation failed";
+constexpr const char* ERR_TOO_LONG = "field too long";
 
 }  // namespace
 
@@ -93,6 +94,10 @@ bool parseManifest(const char* json, size_t jsonLen, RainmakerManifest& out, con
   // The manifest is small (under 1 KB). JsonDocument uses inline storage.
   JsonDocument doc;
   const auto err = deserializeJson(doc, json, jsonLen);
+  if (err == DeserializationError::NoMemory) {
+    errMessage = ERR_OOM;
+    return false;
+  }
   if (err) {
     LOG_ERR("RMK", "manifest json parse: %s", err.c_str());
     errMessage = ERR_TYPE;
@@ -114,26 +119,33 @@ bool parseManifest(const char* json, size_t jsonLen, RainmakerManifest& out, con
     return false;
   }
 
-  // Required strings: id, updatedAt, sha256, bmpUrl, format, contentType
+  // Required strings: id, updatedAt, sha256, bmpUrl, format, contentType.
+  // sha256/bmpUrl must not be truncated — they verify bytes or locate the file.
   copyBounded(out.id, sizeof(out.id), doc["id"] | "");
   copyBounded(out.updatedAt, sizeof(out.updatedAt), doc["updatedAt"] | "");
-  copyBounded(out.sha256, sizeof(out.sha256), doc["sha256"] | "");
+  if (copyBounded(out.sha256, sizeof(out.sha256), doc["sha256"] | "")) {
+    errMessage = ERR_TOO_LONG;
+    return false;
+  }
   copyBounded(out.format, sizeof(out.format), doc["format"] | "");
   copyBounded(out.contentType, sizeof(out.contentType), doc["contentType"] | "");
-  copyBounded(out.bmpUrl, sizeof(out.bmpUrl), doc["bmpUrl"] | "");
+  if (copyBounded(out.bmpUrl, sizeof(out.bmpUrl), doc["bmpUrl"] | "")) {
+    errMessage = ERR_TOO_LONG;
+    return false;
+  }
 
   // Numbers
   if (doc["sequence"].is<uint32_t>()) {
     out.sequence = doc["sequence"].as<uint32_t>();
   } else if (doc["sequence"].is<int>()) {
-    const long long v = doc["sequence"].as<long long>();
+    long long v = doc["sequence"].as<long long>();
     if (v < 0) v = 0;
     out.sequence = static_cast<uint32_t>(v);
   }
   if (doc["bytes"].is<uint32_t>()) {
     out.bytes = doc["bytes"].as<uint32_t>();
   } else if (doc["bytes"].is<int>()) {
-    const long long v = doc["bytes"].as<long long>();
+    long long v = doc["bytes"].as<long long>();
     if (v < 0) v = 0;
     out.bytes = static_cast<uint32_t>(v);
   }

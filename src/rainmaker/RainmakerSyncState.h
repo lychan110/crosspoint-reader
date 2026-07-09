@@ -20,6 +20,7 @@ struct RainmakerSyncState {
   static constexpr const char* STATE_FILE = "/.crosspoint/rainmaker/state.json";
   static constexpr const char* CACHE_BMP = "/.crosspoint/rainmaker/latest.bmp";
   static constexpr const char* CACHE_TMP = "/.crosspoint/rainmaker/latest.tmp";
+  static constexpr const char* CACHE_BAK = "/.crosspoint/rainmaker/latest.bak";
 
   void clear();
 };

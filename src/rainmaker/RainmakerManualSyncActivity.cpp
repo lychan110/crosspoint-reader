@@ -19,7 +19,7 @@ namespace {
 const char* statusToStr(RainmakerSyncStatus s) {
   switch (s) {
     case RainmakerSyncStatus::Ok:
-      return nullptr;  // success path uses STR_RAINMAKER_SYNC_OK_*
+      return nullptr;  // success path returns a translated sync-ok string
     case RainmakerSyncStatus::Disabled:
       return I18n::getInstance().get(StrId::STR_RAINMAKER_SYNC_DISABLED);
     case RainmakerSyncStatus::MissingConfig:

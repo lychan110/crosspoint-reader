@@ -408,7 +408,7 @@ void setup() {
       WiFi.disconnect(true);
       WiFi.mode(WIFI_OFF);
     }
-    display.deepSleep();
+    // Timer-wake fast path skips display init, so no display teardown needed.
     LOG_DBG("MAIN", "Timer-wake sync complete, returning to deep sleep");
     powerManager.startDeepSleep(gpio);
   }
