@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Pre-push guard: prevent accidental direct commits to develop.
+#
+# Allowed pushes to develop:
+#   1. A force-push where local develop == upstream/develop (the re-sync operation).
+#   2. A force-push that is undoing the most recent merge into develop.
+#   3. The very first push (branch not yet on origin) — not applicable to develop since it's a mirror.
+#
+# Everything else is rejected with a pointer to CONTEXT.md rule 1a.
+
+set -euo pipefail
+
+remote="$1"
+url="$2"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+    # Deletion
+    if [ "$remote_ref" = "refs/heads/develop" ]; then
+      echo "refusing to delete origin/develop" >&2
+      exit 1
+    fi
+    continue
+  fi
+
+  if [ "$remote_ref" != "refs/heads/develop" ]; then
+    continue
+  fi
+
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    if git rev-parse --verify --quiet upstream/develop >/dev/null 2>&1; then
+      upstream_sha="$(git rev-parse upstream/develop)"
+      if [ "$local_sha" = "$upstream_sha" ]; then
+        echo "pre-push: allowing initial develop creation matching upstream/develop ($local_sha)" >&2
+        exit 0
+      fi
+    fi
+    echo "refusing to push new branch 'develop' on $remote" >&2
+    echo "develop is a mirror of upstream/develop. Create it with:" >&2
+    echo "  git fetch upstream && git checkout -b develop upstream/develop" >&2
+    exit 1
+  fi
+
+  # Allow force-push that is a clean re-sync to upstream.
+  if git rev-parse --verify --quiet upstream/develop >/dev/null 2>&1; then
+    upstream_sha="$(git rev-parse upstream/develop)"
+    if [ "$local_sha" = "$upstream_sha" ]; then
+      # The push sets develop to upstream/develop. Allow.
+      echo "pre-push: allowing develop re-sync to upstream/develop ($local_sha)" >&2
+      exit 0
+    fi
+  fi
+
+  # Block any other push to develop.
+  echo "" >&2
+  echo "============================================================" >&2
+  echo "BLOCKED: direct push to develop is forbidden." >&2
+  echo "============================================================" >&2
+  echo "develop must remain a byte-for-byte mirror of upstream/develop." >&2
+  echo "See CONTEXT.md rule 1a." >&2
+  echo "" >&2
+  echo "To re-sync develop to upstream (the only permitted push):" >&2
+  echo "  git fetch upstream" >&2
+  echo "  git checkout develop" >&2
+  echo "  git reset --hard upstream/develop" >&2
+  echo "  git push --force-with-lease origin develop" >&2
+  echo "" >&2
+  echo "To push feature work, switch to rainmaker-sync:" >&2
+  echo "  git checkout rainmaker-sync" >&2
+  echo "  git push --force-with-lease origin rainmaker-sync" >&2
+  echo "" >&2
+  echo "To bypass this guard (use only if you know what you are doing):" >&2
+  echo "  git push --no-verify" >&2
+  echo "============================================================" >&2
+  exit 1
+done
