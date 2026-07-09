@@ -37,3 +37,41 @@ gh api repos/lychan110/crosspoint-reader/branches/develop/protection \
 ```
 
 Note: `allow_force_pushes=true` is needed for the periodic re-sync to upstream. The `pre-push` hook is the second line of defense; the GitHub rule is the first.
+
+---
+
+## Branch protection for origin/rainmaker-sync
+
+`rainmaker-sync` is the integration branch. Its protection should be **minimal** — the local `pre-push` hook (`bin/pre-push-guard`) is the only enforcement that matters. Heavy GitHub-side rules here would block the legitimate direct-push workflow that single-session agents use.
+
+### Recommended GitHub rule
+
+1. **Branch name pattern:** `rainmaker-sync`
+2. **Require a pull request before merging:** OFF — direct push is the integration mechanism.
+3. **Require status checks to pass before merging:** OFF — no CI gate on this fork.
+4. **Include administrators:** OFF — local guard already handles the real rules.
+5. **Allow force pushes:** OFF — the only force-pushes here are mistakes; let them fail loudly.
+6. **Allow deletions:** OFF — never delete `rainmaker-sync`.
+
+### What the local guard enforces
+
+- Direct pushes to `develop` are blocked unless they are a clean re-sync to `upstream/develop`.
+- Pushes of `session/*` and `tmp/*` branches are blocked.
+- Pushes to `rainmaker-sync` and work-descriptively named feature branches are allowed normally.
+
+### One-liner to apply the GitHub rule
+
+```bash
+gh api repos/lychan110/crosspoint-reader/branches/rainmaker-sync/protection \
+  -X PUT \
+  -f required_status_checks='null' \
+  -f enforce_admins=false \
+  -f required_pull_request_reviews='null' \
+  -f restrictions='null' \
+  -f required_linear_history=false \
+  -f allow_force_pushes=false \
+  -f allow_deletions=false \
+  -f block_creations=false \
+  -f required_conversation_resolution=false \
+  -f lock_branch=false
+```
