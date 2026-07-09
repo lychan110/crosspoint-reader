@@ -81,5 +81,12 @@ ask the user for guidance instead of falling back to grep/glob.
 - Chain CLI commands when useful. Do not chain with `grep`, `glob`, and `find`.
 
 ## Git Commits
+
 - NEVER include "Co-Authored-By" footers in commit messages. Author is always the user.
 - Keep commit messages concise, focused on the what/why, not narration of the task.
+
+## Parallel Work
+
+If working in parallel with other sessions, use a worktree on a work-descriptively named branch off `rainmaker-sync` (e.g., `feat/<desc>-<date>`, `fix/<desc>-<date>`). Rebase onto current `rainmaker-sync` before merging, merge with `--no-ff`, push, then delete the branch.
+
+Never name a branch `session/*` or `tmp/*`; those prefixes are reserved for cloud-agent internals and are blocked by `bin/pre-push-guard` from ever being pushed to origin.

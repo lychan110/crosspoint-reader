@@ -20,6 +20,8 @@ git fetch origin && git rebase origin/rainmaker-sync
 
 Never commit on `develop`. If you see commits there — stop.
 
+For parallel sessions, use a worktree on a `feat/<desc>-<date>` branch off `rainmaker-sync`; merge with `--no-ff` and delete the branch. Never push `session/*` to origin (blocked by `bin/pre-push-guard`).
+
 ## SETUP
 
 ```bash
