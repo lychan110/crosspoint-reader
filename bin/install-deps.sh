@@ -66,5 +66,7 @@ cat <<EOF
 
 Next steps:
   export PLATFORMIO_CORE_DIR="${PLATFORMIO_CORE_DIR}"
-  pio run -e default    # build the default env
+  ./bin/pio run -e default    # use bin/pio (not raw pio) in cloud-agent sandboxes
   ./bin/clang-format-fix
+
+EOF

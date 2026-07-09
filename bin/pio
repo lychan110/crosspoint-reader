@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# pio wrapper that wires up the Cloudflare-MITM CA fix for sandboxed
+# environments, then forwards to the real `pio` binary.
+#
+# Background: when this repo is built inside a cloudflared sandbox, GitHub
+# release downloads are served by a MITM proxy whose chain ends in a
+# self-signed root. PlatformIO's HTTPSession ignores REQUESTS_CA_BUNDLE and
+# only trusts whatever certifi.where() returns, so we have to point certifi
+# at a combined CA bundle ourselves. `bin/sitecustomize.py` does that
+# automatically when it is on PYTHONPATH at interpreter start.
+#
+# Usage:
+#   bin/pio run -e default
+#   bin/pio run -e gh_release
+#   bin/pio check
+#
+# The wrapper is a no-op outside the sandbox — if the combined CA bundle is
+# missing or PLATFORMIO_CORE_DIR isn't set, it just delegates to pio.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PIO_REAL="$(command -v pio || true)"
+
+if [[ -z "${PIO_REAL}" ]]; then
+    echo "pio: 'pio' not found on PATH" >&2
+    echo "Run bin/install-deps.sh first." >&2
+    exit 127
+fi
+
+# Default PLATFORMIO_CORE_DIR to the project-local location install-deps.sh
+# uses, but only if the caller hasn't already set it. Keeps the sandbox
+# self-contained (no writes to ~/.platformio).
+export PLATFORMIO_CORE_DIR="${PLATFORMIO_CORE_DIR:-${REPO_ROOT}/.pio-platformio}"
+
+# Point sitecustomize.py at the combined CA bundle install-deps.sh writes.
+# sitecustomize.py no-ops if the file is missing, so this is safe everywhere.
+export PLATFORMIO_COMBINED_CA="${PLATFORMIO_CORE_DIR}/combined-ca.crt"
+export PYTHONPATH="${REPO_ROOT}/bin${PYTHONPATH:+:${PYTHONPATH}}"
+
+exec "${PIO_REAL}" "$@"

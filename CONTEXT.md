@@ -71,4 +71,47 @@ Only these paths may be modified for Rainmaker work:
 - `docs/plans/crosspoint-fork-implementation-handoff.md` — the spec (authoritative)
 - `.skills/SKILL.md` — upstream cross-project rules
 - `bin/clang-format-fix` — run before commits
+- `bin/pio` — `pio` wrapper that activates the Cloudflare-MITM CA fix; use this instead of raw `pio` (see [§Sandbox / Cloudflare MITM](#sandbox--cloudflare-mitm))
 - `scripts/gen_i18n.py` — generates I18nKeys.h/I18nStrings.cpp
+
+---
+
+## Sandbox / Cloudflare MITM
+
+Cloud-agent sandboxes route GitHub release downloads through a
+Cloudflare MITM proxy. Two things break and both are addressed:
+
+1. **SSL**: `REQUESTS_CA_BUNDLE` is ignored by PlatformIO's
+   `HTTPSession`; the only way to make it trust the proxy's root is
+   to monkey-patch `certifi.where()`. `bin/sitecustomize.py` does
+   that automatically when its parent dir is on `PYTHONPATH`.
+
+2. **504s**: the proxy occasionally returns `504 Gateway Timeout` for
+   individual release files. Retry `pio run`; in practice 1-2 attempts
+   are enough.
+
+**Always use `./bin/pio` instead of raw `pio` in this sandbox.** It
+sets `PLATFORMIO_CORE_DIR=${REPO_ROOT}/.pio-platformio`,
+`PLATFORMIO_COMBINED_CA=${PLATFORMIO_CORE_DIR}/combined-ca.crt`, and
+adds `bin/` to `PYTHONPATH`. It is a no-op on regular dev machines
+where the combined CA bundle is missing.
+
+Also pre-install `sudo` (`apt-get install -y sudo`) — `bin/install-deps.sh`
+prefixes its `apt` calls with `sudo`.
+
+Full recipes and the retry wrapper are in
+[`docs/ci-and-sandbox.md`](docs/ci-and-sandbox.md). User-facing build
+& flash instructions (with reversion) are in
+[`docs/build-and-flash.md`](docs/build-and-flash.md).
+
+### CI matrix to reproduce before committing
+
+```bash
+./bin/clang-format-fix                                    # formatting
+./bin/pio check                                           # cppcheck
+./bin/pio run -e default                                  # build
+ctest --test-dir build/test --output-on-failure -j        # unit tests
+```
+
+A PR is mergeable when all four pass — same gates as
+`.github/workflows/ci.yml`.
