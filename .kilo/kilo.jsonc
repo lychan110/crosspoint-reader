@@ -10,11 +10,20 @@
 			"dist/**",
 			".git/**"
 		]
-	}
+	},
+	"mcp": {
+		"codebase-memory-mcp": {
+			"type": "local",
+			"command": ["/home/agent_880f91cb-9038-4b40-bd29-e783b55c21bf/.local/bin/codebase-memory-mcp"],
+			"args": [],
+			"enabled": true
+		}
+	},
 	"permission": {
 		"grep *": "deny",
 		"glob *": "deny",
 		"find *": "deny",
+		"codebase-memory-mcp_*": "allow",
 		"read": {
 			"*": "allow",
 			"*.env": "deny",
