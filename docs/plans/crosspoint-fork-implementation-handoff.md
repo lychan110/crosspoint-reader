@@ -11,6 +11,17 @@ The CrossPoint fork must not render widgets. Rainmaker remains the canonical ren
 - `manifest.json`
 - `latest.bmp`
 
+## Important Limitations
+
+### X4 Time Drift
+The X4 ESP32-C3 lacks a dedicated RTC (unlike X3's DS3231). Internal RTC drifts significantly during deep sleep. **Solar-based scheduling is UNRELIABLE on X4**. Use fixed time windows only, or require NTP sync before first timer wake.
+
+### Credential Security
+Credentials are obfuscated but recoverable. Consider per-device tokens or scoped API keys if security is critical.
+
+### OTA/Update Safety
+Timer wake configuration must be disabled before OTA updates to prevent waking into incompatible firmware.
+
 ## Repository Strategy
 
 Use a separate CrossPoint firmware repository.
@@ -38,7 +49,7 @@ Keep Rainmaker work out of CrossPoint except firmware client logic. Do not vendo
 
 ### Build Configuration for X4
 
-The X4 uses ESP32-C3, not ESP32-S3. Target `esp32-c3-devkitm-1` in `platformio.ini`. Builds produce `update.bin` for OTA partition flashing via the web flasher at https://crosspointreader.com/#flash-tools or SD card flashing.
+The X4 uses ESP32-C3, not ESP32-S3. Target `esp32-c3-devkitm-1` in `platformio.ini`. Builds produce `update.bin` for OTA partition flashing.
 
 ```ini
 [env:r4sync]
@@ -52,7 +63,7 @@ build_flags =
 
 Flash methods (per [crosspointreader.com](https://crosspointreader.com/#flash-tools)):
 1. **Web flasher**: Chrome/Edge desktop, requires device at home screen
-2. **SD card**: Copy `update.bin` to SD root, hold power+up buttons at boot (recommended for all X3/X4 devices, including stock firmware)
+2. **SD card**: Copy `update.bin` to SD root, hold power+up buttons at boot (recommended for all X3/X4 devices)
 3. **International devices**: SD flashing recommended (USB flashing may be locked)
 
 After flashing, press Reset then hold power button 3-5 seconds to start the device.
@@ -66,7 +77,7 @@ GET /manifest.json
 GET /latest.bmp
 ```
 
-Both require the same Basic auth credentials.
+Both require the same Basic auth credentials. HTTPS certs must be from a public CA (firmware uses `esp_crt_bundle_attach`).
 
 Expected manifest schema:
 
@@ -93,7 +104,7 @@ Firmware requirements:
 - Accept `version === 1` only.
 - Require `sha256`, `bytes`, `width`, `height`, `bmpUrl`.
 - Require `width === 480`, `height === 800` for X4.
-- Treat `sunriseLocalMinutes` and `sunsetLocalMinutes` as optional.
+- `sunriseLocalMinutes`/`sunsetLocalMinutes` are optional - used for X3 RTC devices only.
 - Use `bmpUrl` from the manifest, not string concatenation.
 - Verify downloaded BMP SHA-256 and byte count before replacing cache.
 
@@ -101,26 +112,15 @@ Firmware requirements:
 
 From upstream CrossPoint `develop`:
 
-- `src/main.cpp`
-  - owns setup, loop, deep sleep, wake routing, and `enterDeepSleep()`.
-  - already tears down Wi-Fi before sleep.
-  - already uses `APP_STATE.showBootScreen` and quick-resume frame behavior.
-- `src/CrossPointSettings.h`
-  - stores persistent settings.
-  - append fields; do not insert enum values in the middle.
-- `src/SettingsList.h`
-  - registers settings shown in device/web settings UI.
-- `src/network/HttpDownloader.h`
-  - has `fetchUrl(url, string&, username, password)`.
-  - has `downloadToFile(url, destPath, progress, cancelFlag, username, password)`.
-  - already supports HTTPS with CA bundle and Basic auth.
-- Existing deep sleep path uses power-button wake only through FreeInk power helpers.
-  - Add app-level `esp_sleep_enable_timer_wakeup(delayUs)` before deep sleep.
-  - Do not modify FreeInk SDK unless absolutely necessary.
+- `src/main.cpp` - owns setup, loop, deep sleep, wake routing, `enterDeepSleep()`. Already tears down Wi-Fi before sleep.
+- `src/CrossPointSettings.h` - stores persistent settings. Append fields; do not insert enum values in the middle.
+- `src/SettingsList.h` - registers settings shown in device/web settings UI. Use `SettingInfo::DynamicString` with ObfuscationUtils for password.
+- `src/network/HttpDownloader.h` - has `fetchUrl` and `downloadToFile` with HTTPS + Basic auth support.
+- `src/activities/network/WifiSelectionActivity.h` - auto-connects to last network via `WIFI_STORE.getLastConnectedSsid()`.
 
 ## New Files to Add
 
-Keep most Rainmaker code in new files.
+Keep most Rainmaker code in new files under `src/rainmaker/`:
 
 ```text
 src/rainmaker/RainmakerManifest.h
@@ -137,8 +137,6 @@ src/rainmaker/Sha256.h
 src/rainmaker/Sha256.cpp
 ```
 
-If upstream style prefers flat `src/`, use `Rainmaker*.h/cpp` in `src/`, but a subdirectory is cleaner.
-
 ## Settings to Add
 
 Append to `CrossPointSettings`:
@@ -149,12 +147,14 @@ char rainmakerManifestUrl[160] = "";
 char rainmakerUsername[48] = "";
 char rainmakerPassword[80] = "";
 uint8_t rainmakerIntervalMinutes = 30;
-uint8_t rainmakerStartMode = 0; // 0=fixed, 1=sunrise
-uint8_t rainmakerEndMode = 0;   // 0=fixed, 1=sunset
+uint8_t rainmakerStartMode = 0; // 0=fixed only (X4 has no reliable RTC)
+uint8_t rainmakerEndMode = 0;   // 0=fixed only
 uint16_t rainmakerStartMinutes = 480;
 uint16_t rainmakerEndMinutes = 1320;
 uint8_t rainmakerMinBatteryPercent = 20;
 uint8_t rainmakerDefaultedSleepMode = 0;
+uint32_t rainmakerLastAttemptEpoch = 0;
+uint8_t rainmakerConsecutiveFailures = 0;
 ```
 
 Add enum constants:
@@ -162,7 +162,6 @@ Add enum constants:
 ```cpp
 enum RAINMAKER_BOUND_MODE {
   RAINMAKER_BOUND_FIXED = 0,
-  RAINMAKER_BOUND_SOLAR = 1,
 };
 ```
 
@@ -181,30 +180,28 @@ When enabling sync for the first time:
 
 ## Settings UI Entries
 
-Add to `SettingsList.h` under a new category or existing system/display category:
+Add to `SettingsList.h` under System category or new category:
 
 - Enable Rainmaker Sync: toggle
-- Manifest URL: string
-- Username: string
-- Password: string/password-like field if supported
-- Sync interval minutes: value, suggested range 5–180
-- Start mode: enum `Fixed`, `Sunrise`
-- End mode: enum `Fixed`, `Sunset`
-- Start time minutes: value 0–1439
-- End time minutes: value 0–1439
-- Minimum battery percent: value 0–100
-- Manual action: `Sync dashboard now`
-
-If CrossPoint’s settings framework does not support action rows cleanly, put manual sync in the home/menu activity instead.
+- Manifest URL: string (max 160 chars)
+- Username: string (max 48 chars)
+- Password: string (max 80 chars, obfuscated via ObfuscationUtils)
+- Sync interval minutes: value, range 5-180 (clamp min 5)
+- Start mode: enum Fixed only (X4: no reliable RTC for solar)
+- End mode: enum Fixed only
+- Start time minutes: value 0-1439
+- End time minutes: value 0-1439
+- Minimum battery percent: value 0-100
+- Manual action: `Sync dashboard now` (SettingAction::RainmakerSync)
 
 ## Runtime State File
 
 Store sync runtime state separately from settings:
 
 ```text
-/.crosspoint/rainmaker/state.json
-/.crosspoint/rainmaker/latest.bmp
-/.crosspoint/rainmaker/latest.tmp
+/.crosspoint/rainmaker_sync/state.json
+/.crosspoint/rainmaker_sync/latest.bmp
+/.crosspoint/rainmaker_sync/latest.tmp
 ```
 
 State fields:
@@ -214,15 +211,16 @@ State fields:
   "lastSha256": "hex",
   "sequence": 123,
   "updatedAt": "2026-07-08T08:00:00Z",
-  "sunriseLocalMinutes": 356,
-  "sunsetLocalMinutes": 1234,
+  "sunriseLocalMinutes": -1,
+  "sunsetLocalMinutes": -1,
   "lastAttemptEpoch": 0,
   "lastSuccessEpoch": 0,
-  "lastError": ""
+  "lastError": "",
+  "consecutiveFailures": 0
 }
 ```
 
-**Storage implementation**: Use `Storage.openFileForRead/Write` via HalStorage (SdFat under the hood). Existing codebase uses JSON for settings (`settings.json` via `JsonSettingsIO`), but for Rainmaker state consider a simple line-based key-value text file to minimize RAM overhead during parsing. Binary struct serialization also viable. Keep writes atomic: close file before rename.
+Storage implementation: Use `Storage.openFileForRead/Write` via HalStorage. Keep writes atomic: close file before rename. Handle corrupted state by falling back to defaults.
 
 ## Manifest Parser
 
@@ -248,10 +246,9 @@ struct RainmakerManifest {
 
 Parser behavior:
 
-- Parse using whichever lightweight JSON facility CrossPoint already uses, if any.
-- Otherwise use small manual extraction for top-level string/number fields.
+- Use ArduinoJson (already in project) or manual extraction for top-level fields.
 - Reject missing required fields.
-- Reject invalid dimensions.
+- Reject invalid dimensions (must be 480x800 for X4).
 - Reject non-hex SHA-256 or wrong length.
 - Bounds-check all strings before copying.
 
@@ -289,6 +286,7 @@ class RainmakerSyncService {
   static RainmakerSyncResult sync(RainmakerSyncMode mode);
   static bool hasCachedDashboard();
   static const char* cachedDashboardPath();
+  static void disableTimerWakeForOta(); // Call before OTA update
 };
 ```
 
@@ -297,12 +295,13 @@ Scheduled mode:
 - skip if disabled
 - skip if missing URL or credentials
 - skip if battery below threshold
-- run without forcing UI sleep screen redraw
+- skip if too many consecutive failures (e.g., >3, indicate user intervention needed)
+- run without forcing UI redraw
 - preserve old cache on failure
 
 Manual mode:
 
-- do not skip solely because of low battery; warn/confirm if UI supports it
+- ignore low-battery guard (show warning if < threshold)
 - show progress/status
 - return to UI on success/failure
 
@@ -310,144 +309,71 @@ Manual mode:
 
 ```text
 sync(mode):
-  validate settings (non-empty URL, credentials for manual)
-  if scheduled and low battery: return LowBattery
-  attempt WiFi connection using existing CrossPoint Wi-Fi mechanism
-  if WiFi fails to connect: return WifiFailed
-  fetch manifest with HttpDownloader::fetchUrl(url, body, username, password)
+  check power button - abort early if user wants control
+  validate settings (non-empty URL, credentials)
+  if scheduled and battery < minBatteryPercent: return LowBattery
+  connect Wi-Fi (max 15s timeout)
+  if WiFi fails: return WifiFailed, increment failure counter
+  fetch manifest via HttpDownloader::fetchUrl(url, body, username, password)
   if fetch failed: return ManifestFetchFailed
   parse and validate manifest
   if invalid: return ManifestInvalid
-  update cached solar times if present in manifest
-  if manifest.sha256 == state.lastSha256 and cached BMP exists:
-    save state and return Ok changed=false
-  download BMP to /.crosspoint/rainmaker/latest.tmp using HttpDownloader::downloadToFile
+  if manifest.sha256 == state.lastSha256 and latest.bmp exists:
+    reset failure counter, save state, return Ok changed=false
+  download BMP to /.crosspoint/rainmaker_sync/latest.tmp
   if download failed: return DownloadFailed
   verify byte count matches manifest.bytes
-  compute sha256 over tmp file in chunks (1024-2048 byte buffer)
+  compute SHA-256 over tmp in 1024-byte chunks
   if hash mismatch: delete tmp, return HashMismatch
+  verify BMP header with Bitmap class
+  if BMP invalid: delete tmp, return FileError
+  close file before rename
   rename tmp -> latest.bmp (atomic replace)
-  update state.lastSha256/sequence/updatedAt/solar times
+  update state (lastSha256, sequence, updatedAt)
+  reset failure counter
   save state and disconnect WiFi
   return Ok changed=true
 ```
 
-Always close files before rename/remove. Always delete temp on failure. On success, disconnect WiFi before returning.
-
-### WiFi Connection Strategy
-
-Re-use CrossPoint's existing Wi-Fi infrastructure:
-
-- For manual sync: Launch or integrate with `CrossPointWebServerActivity` to get Wi-Fi connected (user selects network if needed)
-- For timer-wake sync: Check if Wi-Fi auto-connects via stored `WIFI_STORE.getLastConnectedSsid()` and credentials (STA mode)
-- If no stored network or connection fails: log error, preserve cache, reschedule for next wake
-
-The firmware's existing `WifiSelectionActivity` auto-connects to the last used network on entry when `allowAutoConnect=true`. Timer-wake sync should follow the same pattern.
-
-## SHA-256 Implementation
-
-Use ESP-IDF mbedTLS (already available in framework):
-
-```cpp
-#include <mbedtls/sha256.h>
-```
-
-Pseudo-flow:
-
-```cpp
-mbedtls_sha256_context ctx;
-mbedtls_sha256_init(&ctx);
-mbedtls_sha256_starts_ret(&ctx, 0);  // Note: starts_ret returns esp_err_t
-while (read chunks from file) {
-  mbedtls_sha256_update(&ctx, buffer, len);
-}
-uint8_t digest[32];
-mbedtls_sha256_finish_ret(&ctx, digest);  // Note: finish_ret returns esp_err_t
-mbedtls_sha256_free(&ctx);
-hexEncode(digest, outHex);
-```
-
-Use mbedtls functions with `_ret` suffix (they return error codes). Buffer size: 1024-2048 bytes for file reads. Compare lowercase hex strings case-insensitively.
-
-**Memory note**: The ESP32-C3 has ~380KB RAM. SHA256 context + 2KB read buffer is acceptable during sync, but avoid persistent allocations.
+Always close files before rename/remove. All failures preserve existing cache. On success, WiFi is disconnected before returning. Feed watchdog during long operations.
 
 ## Schedule Logic
 
-Inputs:
+`RainmakerSchedule::nextDelaySeconds(uint16_t nowLocalMinutes)` returns seconds until next sync:
 
-- `rainmakerIntervalMinutes`
-- `rainmakerStartMode`
-- `rainmakerEndMode`
-- `rainmakerStartMinutes`
-- `rainmakerEndMinutes`
-- cached `sunriseLocalMinutes`
-- cached `sunsetLocalMinutes`
-- current local minutes from CrossPoint clock/timezone
-
-Function:
-
-```cpp
-uint32_t RainmakerSchedule::nextDelaySeconds(uint16_t nowLocalMinutes);
-```
+- X4 uses FIXED mode only (solar times ignored due to RTC drift)
+- X3 can use solar times from manifest if available
 
 Rules:
 
-1. Start = fixed start, unless start mode is sunrise and cached sunrise is valid.
-2. End = fixed end, unless end mode is sunset and cached sunset is valid.
-3. If start >= end, fallback to 08:00–22:00.
-4. If now < start, delay until start.
-5. If start <= now < end, delay by interval, but do not exceed end unless intentional.
-6. If now >= end, delay until tomorrow’s start.
-7. Clamp interval to at least 5 minutes.
+1. Start = fixed start time
+2. End = fixed end time
+3. If start >= end, fallback to 08:00-22:00
+4. If now < start, delay until start
+5. If start <= now < end, delay by interval (don't exceed end)
+6. If now >= end, delay until next day's start
+7. Clamp interval to at least 5 minutes
 
-Examples:
+If next interval would exceed end, schedule next day start.
 
-```text
-now 07:00, window 08:00-22:00 -> 3600s
-now 10:10, interval 30m -> 1800s
-now 21:50, interval 30m -> 600s or next-day start; choose 600s to hit final boundary
-now 22:10 -> next day 08:00
-```
-
-Recommended: if next interval would go past end, schedule next day start instead to avoid a wake exactly at end that does no sync.
+Consecutive failures: If >3 consecutive failures, consider disabling sync until user intervention (display on sleep screen or settings).
 
 ## Timer Wake Integration
 
 In `src/main.cpp`:
 
-- include `esp_sleep.h` (via `include/Arduino.h` or direct)
-- identify timer wake during setup:
+- Timer wake detection at top of `setup()`:
 
 ```cpp
 const bool rainmakerTimerWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
 ```
 
-After settings/state load and before normal routing:
+- On timer wake with sync enabled: run `RainmakerSyncService::sync(Scheduled)`, then `enterDeepSleep(true)` and `return`
+- Before deep sleep (after WiFi teardown in `enterDeepSleep()`): call `esp_sleep_enable_timer_wakeup(delaySeconds * 1000000ULL)`
 
-```cpp
-if (rainmakerTimerWake && SETTINGS.rainmakerSyncEnabled) {
-  auto result = RainmakerSyncService::sync(RainmakerSyncMode::Scheduled);
-  enterDeepSleep(true);
-  return;
-}
-```
+**OTA Safety**: Call `RainmakerSyncService::disableTimerWakeForOta()` or check a "sync disabled during update" flag before setting timer wake.
 
-Before deep sleep start, after power button wake has been armed but BEFORE calling `enterDeepSleep()`:
-
-```cpp
-if (SETTINGS.rainmakerSyncEnabled) {
-  uint32_t delaySeconds = RainmakerSchedule::nextDelaySeconds(nowLocalMinutes);
-  if (delaySeconds > 0) {
-    esp_sleep_enable_timer_wakeup((uint64_t)delaySeconds * 1000000ULL);
-  }
-}
-```
-
-Call this AFTER Wi-Fi teardown in `enterDeepSleep()` to avoid modem power domain issues. The timer wake bit is set in the RTC registers and survives deep sleep.
-
-**Important**: The existing `enterDeepSleep()` calls `powerManager.startDeepSleep(gpio)` which handles GPIO wake setup. Timer wake is additive. Do not modify `HalPowerManager::startDeepSleep()` flow - just call `esp_sleep_enable_timer_wakeup()` before it.
-
-Do not remove existing power-button wake. Timer wake is additive.
+Power-button wake stays armed. Timer wake is additive.
 
 ## Sleep Screen Mode
 
@@ -457,38 +383,30 @@ In the sleep-screen rendering path:
 
 ```text
 if SETTINGS.sleepScreen == RAINMAKER:
-  if cached BMP exists:
+  if /.crosspoint/rainmaker_sync/latest.bmp exists:
     draw BMP full-screen
+    if consecutiveFailures > 0: show small error badge
   else:
-    fallback to dark/light/custom or message
+    fallback to dark/light/custom
 else:
   existing CrossPoint behavior
 ```
 
-Important:
-
-- Do not write Rainmaker BMP into `/.sleep` or `/sleep` random wallpaper directories.
-- Use `/.crosspoint/rainmaker/latest.bmp` only.
-- If BMP render fails, fall back safely.
-
-If CrossPoint already has BMP image drawing utilities, use them. Otherwise implement only what is needed for 1-bit/24-bit BMP produced by Rainmaker.
+Reuse `SleepActivity::renderBitmapSleepScreen()` and `BmpViewerActivity` patterns. BMP render failures fall back safely.
 
 ## Manual Sync UI
 
-Add one entry: `Sync Rainmaker dashboard`.
+One entry: **Sync Rainmaker dashboard**.
 
 Flow:
 
-1. Show progress: connecting Wi-Fi.
-2. Fetch manifest.
-3. Download/verify if changed.
-4. Show:
-   - `Dashboard updated`
-   - `Dashboard already current`
-   - or failure message.
+1. Connecting Wi-Fi...
+2. Fetching manifest...
+3. Downloading dashboard... (only if changed)
+4. Result: `Dashboard updated` / `Dashboard already current` / specific failure
 5. Return to previous UI.
 
-Manual sync does not sleep automatically.
+Manual sync never sleeps the device automatically.
 
 ## Build Milestones
 
@@ -496,8 +414,8 @@ Manual sync does not sleep automatically.
 
 - Add settings fields.
 - Add settings UI entries.
-- Build firmware: `pio run -e r4sync` (produces `update.bin` in `.pio/build/r4sync/`).
-- Flash via SD card or web flasher per crosspointreader.com#flash-tools.
+- Build firmware: `pio run -e r4sync`.
+- Flash via SD card or web flasher.
 - Confirm existing reader opens books and settings screen works.
 
 ### Milestone 2: Manual Manifest Fetch
@@ -509,55 +427,61 @@ Manual sync does not sleep automatically.
 ### Milestone 3: BMP Download + Verify
 
 - Download to temp.
-- Verify size and SHA-256.
+- Verify size and SHA-256 in chunks (watchdog fed).
+- Verify BMP header.
 - Atomically replace cache.
 - Confirm cache survives reboot.
 
 ### Milestone 4: Rainmaker Sleep Mode
 
 - Add `RAINMAKER` sleep-screen enum.
-- Draw cached BMP during sleep.
+- Draw cached BMP during sleep (reuse existing patterns).
+- Show error badge for consecutive failures.
 - Confirm user can override back to other sleep modes.
 
 ### Milestone 5: Timer Wake
 
-- Add `esp_sleep_enable_timer_wakeup` before deep sleep.
-- Test with a temporary 2-minute interval.
+- Add `esp_sleep_enable_timer_wakeup` after WiFi teardown.
+- Implement `disableTimerWakeForOta()`.
+- Test with 2-minute interval.
 - Confirm timer wake syncs and returns to deep sleep.
 - Confirm power button wake still works.
 
-### Milestone 6: Full Schedule + Solar + Battery Guard
+### Milestone 6: Production Hardening
 
-- Add fixed/solar bounds.
-- Cache solar times from manifest.
-- Add low-battery skip for scheduled sync.
-- Confirm manual sync can still run with warning.
+- Add failure counter and graceful degradation.
+- Add watchdog feeding during sync.
+- Add OTA safety check.
+- Add user warning for low battery manual sync.
 
 ## Test Matrix
 
-### Required Happy Paths
+### Happy paths
 
 - Manual sync with valid credentials downloads `latest.bmp`.
-- Manual sync again skips unchanged image.
+- Manual sync skips when SHA-256 unchanged.
 - Sleep mode `RAINMAKER` displays cached dashboard.
 - Scheduled timer wake syncs and returns to deep sleep.
-- Power button wake still opens normal CrossPoint UI.
+- Power-button wake opens normal CrossPoint UI.
 - User can disable sync.
-- User can choose non-Rainmaker sleep screen after enabling sync.
+- User can change sleep screen away from Rainmaker.
 
-### Failure Cases
+### Failure paths
 
 - Missing URL -> clear manual error.
 - Bad auth -> no cache replacement.
-- Server offline -> old dashboard remains.
+- Server offline -> old dashboard remains, failure counter incremented.
 - Invalid manifest -> old dashboard remains.
 - SHA mismatch -> temp deleted, old dashboard remains.
 - Low battery scheduled wake -> skip sync, schedule next wake.
-- No cached solar times with solar mode -> fixed fallback.
+- WiFi timeout -> `WifiFailed`, state records error.
+- Corrupted state -> falls back to defaults.
+- >3 consecutive failures -> degraded state shown on sleep screen.
+- OTA update -> timer wake disabled during update.
 
 ## Rebase Safety Rules
 
-- Keep new logic in `src/rainmaker/*`.
+- Keep new logic in `src/rainmaker/`.
 - Touch `main.cpp` in the smallest possible blocks.
 - Append settings and enum values; never reorder existing values.
 - Do not refactor CrossPoint sleep or Wi-Fi flows beyond required hooks.
@@ -572,32 +496,8 @@ rainmaker: add sync state and BMP verification
 rainmaker: add manual dashboard sync action
 rainmaker: add deterministic dashboard sleep screen
 rainmaker: add scheduled timer wake
-rainmaker: add solar schedule and battery guard
+rainmaker: add OTA safety and failure recovery
 ```
-
-## Rainmaker VPS Setup Expected by Firmware
-
-Example command after Rainmaker implementation:
-
-```bash
-X4_PUBLISH_USER=x4 \
-X4_PUBLISH_PASS='<strong-password>' \
-npm run x4:render -- \
-  --config /srv/rainmaker/x4-dashboard.json \
-  --out /srv/rainmaker/render/latest-render.bmp \
-  --publish-dir /srv/x4 \
-  --publish-base-url https://example.com/x4 \
-  --manifest-id rainmaker-x4-dashboard
-```
-
-Expected public URLs:
-
-```text
-https://example.com/x4/manifest.json
-https://example.com/x4/latest.bmp
-```
-
-Configure the X4 manifest URL to the manifest URL and set Basic auth username/password in CrossPoint settings.
 
 ## Done Definition
 
@@ -605,6 +505,8 @@ The fork is complete when:
 
 - X4 can manually sync from the VPS.
 - X4 displays Rainmaker dashboard as sleep screen from cached BMP.
-- X4 timer-wakes during configured window, fetches only changed dashboards, and returns to deep sleep.
+- X4 timer-wakes during configured window (fixed time only), fetches only changed dashboards, returns to deep sleep.
 - Existing e-reader behavior is unaffected.
-- The branch rebases cleanly over upstream `develop` with only small expected conflicts in settings/menu/main hooks.
+- The branch rebases cleanly over upstream `develop`.
+- OTA updates disable timer wake safely.
+- Consecutive failures are handled gracefully.

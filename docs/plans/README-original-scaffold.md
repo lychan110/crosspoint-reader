@@ -8,9 +8,20 @@ All Rainmaker work lives on a single topic branch (`rainmaker-sync`) for painles
 
 - Fetch `manifest.json` and `latest.bmp` over HTTPS with Basic auth
 - Cache the BMP and render it as a sleep screen
-- Scheduled timer wake during a configurable waking window (fixed hours or sunrise/sunset)
+- Scheduled timer wake during a configurable waking window (fixed hours only - see below)
 - Manual sync from a settings entry
 - Preserve every existing CrossPoint feature (books, UI, power-button wake, etc.)
+
+## Important Limitations
+
+### X4 Time Drift
+The X4 ESP32-C3 lacks a dedicated RTC (unlike X3's DS3231). Internal RTC drifts significantly during deep sleep. **Solar-based scheduling is UNRELIABLE on X4**. Use fixed time windows only, or require NTP sync before first timer wake.
+
+### Credential Security
+Credentials are obfuscated but recoverable. Consider per-device tokens or scoped API keys if security is critical.
+
+### OTA/Update Safety
+Timer wake configuration must be disabled before OTA updates to prevent waking into incompatible firmware.
 
 ## Repository Setup
 
@@ -58,10 +69,12 @@ src/
 Stored on the device, separate from CrossPoint settings:
 
 ```text
-/.crosspoint/rainmaker/state.json
-/.crosspoint/rainmaker/latest.bmp
-/.crosspoint/rainmaker/latest.tmp
+/.crosspoint/rainmaker_sync/state.json
+/.crosspoint/rainmaker_sync/latest.bmp
+/.crosspoint/rainmaker_sync/latest.tmp
 ```
+
+Note: Using underscore (`rainmaker_sync`) to avoid path confusion with main cache directories.
 
 `state.json` fields: `lastSha256`, `sequence`, `updatedAt`, `sunriseLocalMinutes`, `sunsetLocalMinutes`, `lastAttemptEpoch`, `lastSuccessEpoch`, `lastError`.
 
@@ -72,12 +85,12 @@ Appended to `CrossPointSettings` (do not insert enum values in the middle of any
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `rainmakerSyncEnabled` | uint8_t | 0 | Master toggle |
-| `rainmakerManifestUrl` | char[160] | `""` | Full URL to `manifest.json` |
+| `rainmakerManifestUrl` | char[160] | `""` | Full URL to `manifest.json` (HTTPS, public CA) |
 | `rainmakerUsername` | char[48] | `""` | HTTPS Basic auth user |
-| `rainmakerPassword` | char[80] | `""` | HTTPS Basic auth password |
+| `rainmakerPassword` | char[80] | `""` | HTTPS Basic auth password (obfuscated on disk) |
 | `rainmakerIntervalMinutes` | uint8_t | 30 | Sync interval, clamped to >=5 |
-| `rainmakerStartMode` | uint8_t | 0 | `RAINMAKER_BOUND_FIXED=0`, `RAINMAKER_BOUND_SOLAR=1` |
-| `rainmakerEndMode` | uint8_t | 0 | `RAINMAKER_BOUND_FIXED=0`, `RAINMAKER_BOUND_SOLAR=1` |
+| `rainmakerStartMode` | uint8_t | 0 | FIXED=0 only (X4 has no reliable RTC for solar) |
+| `rainmakerEndMode` | uint8_t | 0 | FIXED=0 only |
 | `rainmakerStartMinutes` | uint16_t | 480 (08:00) | Local minutes from midnight |
 | `rainmakerEndMinutes` | uint16_t | 1320 (22:00) | Local minutes from midnight |
 | `rainmakerMinBatteryPercent` | uint8_t | 20 | Scheduled sync skips below this % |
@@ -87,7 +100,7 @@ First-time enable auto-defaults `sleepScreen` to `RAINMAKER` if the user hasn't 
 
 A new `RAINMAKER` value is appended to the existing sleep-screen enum. Existing values are not renumbered.
 
-Settings UI entries: enable toggle, manifest URL, username, password, interval (5-180), start/end mode, start/end minutes, minimum battery, and a **Sync dashboard now** manual action (or a home-menu entry if the settings framework can't host an action row).
+Settings UI entries: enable toggle, manifest URL, username, password, interval (5-180), start/end mode (fixed only), start/end minutes, minimum battery, and a **Sync dashboard now** manual action.
 
 ## Manifest Schema
 
@@ -119,62 +132,68 @@ The firmware expects `manifest.json` with this shape:
 - `sha256` is **lowercase hex**, exactly 64 characters
 - `bmpUrl` is used as-is - no string concatenation
 - Downloaded BMP is verified against `sha256` and `bytes` **before** replacing the cache
-- `sunriseLocalMinutes` / `sunsetLocalMinutes` are optional (sentinel `-1` when absent)
+- `sunriseLocalMinutes` / `sunsetLocalMinutes` are optional (sentinel `-1` when absent) - used for X3 RTC devices only
 
 ## Sync Algorithm
 
 ```text
 sync(mode):
-  validate settings
+  validate settings (non-empty URL, credentials)
   if scheduled and battery < minBatteryPercent: return LowBattery
+  check for power button press - abort if held (reduces latency)
   connect Wi-Fi (existing CrossPoint network path)
+  if connect fails after 15s timeout: return WifiFailed
   fetch manifest via HttpDownloader::fetchUrl(url, body, user, pass)
+  if fetch failed: return ManifestFetchFailed
   parse and validate manifest
-  cache solar times if present
+  if invalid: return ManifestInvalid
   if manifest.sha256 == state.lastSha256 and latest.bmp exists:
-    persist state, return Ok changed=false
-  download BMP to /.crosspoint/rainmaker/latest.tmp
+    save state, return Ok changed=false
+  download BMP to /.crosspoint/rainmaker_sync/latest.tmp
+  if download failed: return DownloadFailed
   verify byte count == manifest.bytes
-  compute SHA-256 over tmp
-  compare to manifest.sha256 (case-insensitive)
+  compute SHA-256 over tmp in 1024-byte chunks
+  if hash mismatch: delete tmp, return HashMismatch
+  verify BMP header with Bitmap class
+  if BMP invalid: delete tmp, return FileError
+  close file before rename
   rename tmp -> latest.bmp
-  update state (lastSha256, sequence, updatedAt, solar times)
-  persist state
+  update state (lastSha256, sequence, updatedAt)
+  save state
+  disconnect WiFi
   return Ok changed=true
 ```
 
-Temp files are always closed before rename/remove. Failures leave the existing cache intact.
+Temp files are closed before rename/remove. All failures preserve existing cache. On success, WiFi is disconnected before returning.
 
 ### WiFi Connection Strategy
 
-Re-use CrossPoint's existing Wi-Fi infrastructure:
+Manual sync: user connects via `CrossPointWebServerActivity` (select network, connect) first. Then trigger sync.
 
-- Manual sync: user connects via `CrossPointWebServerActivity` (select network, connect) first. Then trigger sync.
-- Timer-wake sync: auto-connect to last stored network via `WIFI_STORE.getLastConnectedSsid()` if available (STA mode)
-- If connection fails: log error, preserve cache, reschedule for next wake
+Timer-wake sync: auto-connect to last stored network via `WIFI_STORE.getLastConnectedSsid()` if available. Max 15s connection timeout. If connection fails: log error, preserve cache, increment failure counter in state, reschedule for next wake (max retry every wake window).
 
-The firmware's `WifiSelectionActivity` auto-connects to the last used network on entry when `allowAutoConnect=true`. Timer-wake sync should follow the same pattern.
+### Watchdog Handling
+
+During sync operations, feed watchdog every 500ms to prevent reset during slow network operations.
 
 ## Schedule Logic
 
-`RainmakerSchedule::nextDelaySeconds(uint16_t nowLocalMinutes)` returns the seconds until the next sync attempt, given:
+`RainmakerSchedule::nextDelaySeconds(uint16_t nowLocalMinutes)` returns seconds until next sync:
 
-- `rainmakerIntervalMinutes`, `rainmakerStartMode`, `rainmakerEndMode`
-- `rainmakerStartMinutes`, `rainmakerEndMinutes`
-- Cached `sunriseLocalMinutes` / `sunsetLocalMinutes`
-- Current local minutes from the CrossPoint clock/timezone
+- X4 uses only FIXED mode (solar times ignored - unreliable without RTC)
+- X3 can use solar times from manifest if available
 
 Rules:
 
-1. Start = fixed value unless start mode is `SOLAR` and cached sunrise is valid
-2. End = fixed value unless end mode is `SOLAR` and cached sunset is valid
-3. If `start >= end`, fall back to 08:00-22:00
-4. If `now < start`, delay until start
-5. If `start <= now < end`, delay by interval (don't punch past end)
-6. If `now >= end`, delay until tomorrow's start
+1. Start = fixed start time
+2. End = fixed end time
+3. If start >= end, fallback to 08:00-22:00
+4. If now < start, delay until start
+5. If start <= now < end, delay by interval (don't exceed end)
+6. If now >= end, delay until next day's start
 7. Clamp interval to at least 5 minutes
 
-If the next interval would cross the end boundary, prefer tomorrow's start over a wake at end that does nothing.
+If next interval would exceed end, schedule next day start to avoid unnecessary wake.
 
 ## Timer Wake Integration
 
@@ -188,22 +207,21 @@ const bool rainmakerTimerWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP
 ```
 
 - On timer wake with sync enabled: run `RainmakerSyncService::sync(Scheduled)`, then `enterDeepSleep(true)` and `return`
-- Before deep sleep (after WiFi teardown): call `esp_sleep_enable_timer_wakeup(delaySeconds * 1000000ULL)` if sync enabled
+- Before deep sleep (after WiFi teardown in `enterDeepSleep()`): call `esp_sleep_enable_timer_wakeup(delaySeconds * 1000000ULL)` if sync enabled
 
 Power-button wake stays armed - timer wake is additive, never replaces it.
 
-**Important**: Call `esp_sleep_enable_timer_wakeup()` before `enterDeepSleep()` returns, but after WiFi teardown in the existing code. The existing `enterDeepSleep()` calls `powerManager.startDeepSleep(gpio)` which handles GPIO wake setup.
+**Critical**: Timer wake must be disabled during OTA updates. Consider checking a flag in state or the OTA update path to prevent timer wake while updating.
 
 ## Sleep Screen
 
 When `SETTINGS.sleepScreen == RAINMAKER`:
 
-- If `/.crosspoint/rainmaker/latest.bmp` exists, draw it full screen
-- Otherwise fall back to dark/light/custom or a status message
-- The Rainmaker BMP never lands in `/.sleep` or any random-wallpaper directory
+- If `/.crosspoint/rainmaker_sync/latest.bmp` exists, draw it full screen
+- Otherwise fall back to dark/light/custom
 - BMP render failures fall back safely
 
-Reuse CrossPoint's existing BMP draw utility (see `SleepActivity::renderBitmapSleepScreen()` and `BmpViewerActivity`). The `Bitmap` class and `renderer.drawBitmap()` handle 1-bit BMP rendering. For grayscale support, use `renderer.displayGrayscaleBase()` and `renderer.copyGrayscaleLsbBuffers()`/`renderer.copyGrayscaleMsbBuffers()` patterns already in `SleepActivity`.
+Reuse CrossPoint's existing BMP draw utility (see `SleepActivity::renderBitmapSleepScreen()` and `BmpViewerActivity`). The `Bitmap` class and `renderer.drawBitmap()` handle 1-bit BMP rendering.
 
 ## Manual Sync UI
 
@@ -224,7 +242,7 @@ Manual sync never sleeps the device automatically.
 ### Prerequisites
 
 - PlatformIO Core or PlatformIO IDE
-- Xteink X3 or X4 e-reader (ESP32-C3, not ESP32-S3)
+- Xteink X3 or X4 e-reader (ESP32-C3)
 - USB cable for flashing OR SD card for SD-flashing method
 
 ### Flash Methods (per crosspointreader.com#flash-tools)
@@ -242,7 +260,7 @@ git clone <repo-url>
 cd crosspoint-rainmaker
 git checkout rainmaker-sync
 pio run                  # build
-pio run --target upload  # flash via USB (may be locked on some devices)
+pio run --target upload  # flash via USB
 pio device monitor       # serial log
 ```
 
@@ -259,7 +277,7 @@ build_flags =
     -DENABLE_RAINMAKER_SYNC
 ```
 
-Note: The base profile already enables `-fno-exceptions`. Do not add `-fexceptions` or `-fpermissive` as these increase binary size and may cause stack overflow on constrained ESP32-C3.
+Note: The base profile uses `-fno-exceptions`. Do not enable exceptions.
 
 ## Build Milestones
 
@@ -269,8 +287,8 @@ Incremental - each milestone is independently testable:
 2. **Manual manifest fetch** - parser + `sync(Manual)` with manifest only; log the result
 3. **BMP download + verify** - temp file, byte/SHA-256 check, atomic replace, cache survives reboot
 4. **Rainmaker sleep mode** - `RAINMAKER` enum value + draw cached BMP, confirm override back to other modes
-5. **Timer wake** - `esp_sleep_enable_timer_wakeup`, test with a temporary 2-minute interval, confirm power-button wake still works
-6. **Full schedule + solar + battery guard** - fixed/solar bounds, cached solar times, low-battery skip, manual sync still runs
+5. **Timer wake** - `esp_sleep_enable_timer_wakeup`, test with 2-minute interval, confirm power-button wake still works
+6. **Full schedule + battery guard** - fixed bounds only (X4), low-battery skip, manual sync still runs
 
 ## Test Matrix
 
@@ -281,11 +299,14 @@ Incremental - each milestone is independently testable:
 - Sleep mode `RAINMAKER` displays the cached dashboard
 - Scheduled timer wake syncs then returns to deep sleep
 - Power-button wake still opens the normal CrossPoint UI
+- Timer wake properly disabled during OTA update
 
 ### Failure paths
 
 - Manifest fetch fails - state records `lastError`, cache preserved
-- Manifest invalid (bad version, missing field, bad dimensions, non-hex SHA-256) - `ManifestInvalid`, no download
+- Manifest invalid - `ManifestInvalid`, no download
 - BMP download truncates - byte-count mismatch, `DownloadFailed`, no replace
 - SHA-256 mismatch - `HashMismatch`, tmp deleted, cache preserved
 - Scheduled run below battery threshold - `LowBattery`, no Wi-Fi attempt
+- WiFi timeout - `WifiFailed`, state records error, next wake retries
+- Corrupted state file - falls back to defaults, sync runs
