@@ -23,6 +23,30 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
 
+  # Block pushes (not deletions) of session/* and tmp/* branches.
+  # These prefixes are reserved for cloud-agent internals and must
+  # never appear on origin. If a session's work is worth keeping,
+  # merge it into rainmaker-sync first and delete the temp branch.
+  case "$remote_ref" in
+    refs/heads/session/*|refs/heads/tmp/*)
+      branch="${remote_ref#refs/heads/}"
+      echo "" >&2
+      echo "============================================================" >&2
+      echo "BLOCKED: push of '$branch' is forbidden." >&2
+      echo "============================================================" >&2
+      echo "session/* and tmp/* are cloud-agent internals. Merge the" >&2
+      echo "work into rainmaker-sync first, then delete the temp branch." >&2
+      echo "" >&2
+      echo "  git checkout rainmaker-sync" >&2
+      echo "  git merge --no-ff $branch" >&2
+      echo "  git push origin rainmaker-sync" >&2
+      echo "  git branch -D $branch" >&2
+      echo "  git push origin --delete $branch" >&2
+      echo "============================================================" >&2
+      exit 1
+      ;;
+  esac
+
   if [ "$remote_ref" != "refs/heads/develop" ]; then
     continue
   fi
