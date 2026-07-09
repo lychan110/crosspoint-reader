@@ -24,9 +24,9 @@ enum class RainmakerSyncStatus : uint8_t {
 
 struct RainmakerSyncResult {
   RainmakerSyncStatus status = RainmakerSyncStatus::Ok;
-  bool changed = false;            // true if a new BMP replaced the cache
-  uint32_t bytesDownloaded = 0;    // bytes written to the BMP cache on success
-  char message[96];                // short human-readable reason
+  bool changed = false;          // true if a new BMP replaced the cache
+  uint32_t bytesDownloaded = 0;  // bytes written to the BMP cache on success
+  char message[96];              // short human-readable reason
 };
 
 // Run a sync. In Scheduled mode, sync() is a no-op when the user has

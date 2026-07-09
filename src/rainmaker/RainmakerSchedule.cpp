@@ -8,8 +8,8 @@ namespace rainmaker {
 
 namespace {
 constexpr uint16_t MIN_INTERVAL_MIN = 5;
-constexpr uint16_t DEFAULT_START_MIN = 8 * 60;    // 08:00
-constexpr uint16_t DEFAULT_END_MIN = 22 * 60;     // 22:00
+constexpr uint16_t DEFAULT_START_MIN = 8 * 60;  // 08:00
+constexpr uint16_t DEFAULT_END_MIN = 22 * 60;   // 22:00
 constexpr uint32_t SECONDS_PER_DAY = 24UL * 60UL * 60UL;
 }  // namespace
 

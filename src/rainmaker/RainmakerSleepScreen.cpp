@@ -14,8 +14,7 @@ namespace {
 void renderMissingDashboard(GfxRenderer& renderer) {
   const auto pageHeight = renderer.getScreenHeight();
   renderer.clearScreen();
-  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_RAINMAKER_NO_DASHBOARD), true,
-                            EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_RAINMAKER_NO_DASHBOARD), true, EpdFontFamily::BOLD);
   renderer.displayBuffer(HalDisplay::FULL_REFRESH);
 }
 }  // namespace

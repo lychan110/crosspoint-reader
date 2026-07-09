@@ -95,8 +95,7 @@ void RainmakerManualSyncActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight},
-                 tr(STR_RAINMAKER_SYNC_NOW));
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_RAINMAKER_SYNC_NOW));
 
   const int centerY = pageHeight / 2;
   switch (state) {
