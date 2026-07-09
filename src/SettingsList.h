@@ -105,7 +105,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // --- Display ---
         SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
                           {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
-                           StrId::STR_COVER_CUSTOM, StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME},
+                           StrId::STR_COVER_CUSTOM, StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME, StrId::STR_RAINMAKER},
                           "sleepScreen", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                           {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY),
@@ -193,6 +193,34 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
+        // --- Rainmaker dashboard sync ---
+        // URL/credentials are web-only (the device SettingsActivity doesn't
+        // render STRING-typed fields). They use STR_CAT_RAINMAKER, a category
+        // that the device rebuildSettingsLists doesn't recognize — same
+        // pattern as the KOReader credentials.
+        SettingInfo::Toggle(StrId::STR_RAINMAKER_ENABLE, &CrossPointSettings::rainmakerSyncEnabled,
+                            "rainmakerSyncEnabled", StrId::STR_CAT_SYSTEM),
+        SettingInfo::String(StrId::STR_RAINMAKER_URL, SETTINGS.rainmakerManifestUrl,
+                            sizeof(SETTINGS.rainmakerManifestUrl), "rainmakerManifestUrl", StrId::STR_CAT_RAINMAKER),
+        SettingInfo::String(StrId::STR_RAINMAKER_USERNAME, SETTINGS.rainmakerUsername,
+                            sizeof(SETTINGS.rainmakerUsername), "rainmakerUsername", StrId::STR_CAT_RAINMAKER),
+        SettingInfo::String(StrId::STR_RAINMAKER_PASSWORD, SETTINGS.rainmakerPassword,
+                            sizeof(SETTINGS.rainmakerPassword), "rainmakerPassword", StrId::STR_CAT_RAINMAKER)
+            .withObfuscated(),
+        SettingInfo::Value(StrId::STR_RAINMAKER_INTERVAL, &CrossPointSettings::rainmakerIntervalMinutes, {5, 180, 5},
+                           "rainmakerIntervalMinutes", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Enum(StrId::STR_RAINMAKER_START_MODE, &CrossPointSettings::rainmakerStartMode,
+                          {StrId::STR_RAINMAKER_BOUND_FIXED, StrId::STR_RAINMAKER_BOUND_SOLAR}, "rainmakerStartMode",
+                          StrId::STR_CAT_SYSTEM),
+        SettingInfo::Enum(StrId::STR_RAINMAKER_END_MODE, &CrossPointSettings::rainmakerEndMode,
+                          {StrId::STR_RAINMAKER_BOUND_FIXED, StrId::STR_RAINMAKER_BOUND_SOLAR}, "rainmakerEndMode",
+                          StrId::STR_CAT_SYSTEM),
+        SettingInfo::Value(StrId::STR_RAINMAKER_START_TIME, &CrossPointSettings::rainmakerStartMinutes, {0, 239, 1},
+                           "rainmakerStartMinutes", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Value(StrId::STR_RAINMAKER_END_TIME, &CrossPointSettings::rainmakerEndMinutes, {0, 239, 1},
+                           "rainmakerEndMinutes", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Value(StrId::STR_RAINMAKER_MIN_BATTERY, &CrossPointSettings::rainmakerMinBatteryPercent,
+                           {0, 100, 5}, "rainmakerMinBatteryPercent", StrId::STR_CAT_SYSTEM),
 
         // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
         SettingInfo::DynamicString(

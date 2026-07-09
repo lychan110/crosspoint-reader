@@ -25,6 +25,7 @@
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "rainmaker/RainmakerManualSyncActivity.h"
 
 const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
                                                               StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
@@ -66,6 +67,7 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_RAINMAKER_SYNC_NOW, SettingAction::RainmakerSyncNow));
   // Insert "Manage Fonts" right after the font family setting so users discover it naturally
   readerSettings.insert(readerSettings.begin() + 1,
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
@@ -203,6 +205,13 @@ void SettingsActivity::toggleCurrentSetting() {
     // Toggle the boolean value using the member pointer
     const bool currentValue = SETTINGS.*(setting.valuePtr);
     SETTINGS.*(setting.valuePtr) = !currentValue;
+    // First-time Rainmaker enable: default the sleep screen to the cached
+    // dashboard unless the user has already changed it (one-shot, persistent).
+    if (setting.valuePtr == &CrossPointSettings::rainmakerSyncEnabled && !currentValue &&
+        SETTINGS.rainmakerDefaultedSleepMode == 0) {
+      SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::RAINMAKER;
+      SETTINGS.rainmakerDefaultedSleepMode = 1;
+    }
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
     if (setting.enumValues.size() > 2) {
@@ -294,6 +303,10 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::Language:
         startActivityForResult(std::make_unique<LanguageSelectActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::RainmakerSyncNow:
+        startActivityForResult(std::make_unique<rainmaker::RainmakerManualSyncActivity>(renderer, mappedInput),
+                               resultHandler);
         break;
       case SettingAction::None:
         // Do nothing

@@ -32,6 +32,7 @@ class CrossPointSettings {
     BLANK = 4,
     COVER_CUSTOM = 5,
     QUICK_RESUME = 6,
+    RAINMAKER = 7,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
@@ -181,6 +182,12 @@ class CrossPointSettings {
     QUICK_RESUME_SLEEP_SCREEN_COUNT
   };
 
+  // Rainmaker dashboard sync — bound mode (matches the handoff's enum).
+  enum RAINMAKER_BOUND_MODE {
+    RAINMAKER_BOUND_FIXED = 0,
+    RAINMAKER_BOUND_SOLAR = 1,
+  };
+
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
   // Sleep screen cover mode settings
@@ -271,6 +278,23 @@ class CrossPointSettings {
   uint8_t language = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
+  // Rainmaker dashboard sync (see src/rainmaker/). Fields are appended and
+  // never renumbered so old settings.json files keep loading.
+  uint8_t rainmakerSyncEnabled = 0;
+  char rainmakerManifestUrl[160] = "";
+  char rainmakerUsername[48] = "";
+  char rainmakerPassword[80] = "";
+  uint8_t rainmakerIntervalMinutes = 30;
+  uint8_t rainmakerStartMode = RAINMAKER_BOUND_FIXED;
+  uint8_t rainmakerEndMode = RAINMAKER_BOUND_FIXED;
+  // Start/end minutes are stored as 6-minute quanta (0..239) so they fit in
+  // uint8_t and ride the existing SettingInfo::Value path. Resolution is
+  // 6 minutes which is more than enough for "start ~8am" / "end ~10pm"
+  // windows and aligns with the 5-minute minimum interval.
+  uint8_t rainmakerStartMinutes = 80;  // 8h * 10 quanta/hour
+  uint8_t rainmakerEndMinutes = 220;   // 22h * 10 quanta/hour
+  uint8_t rainmakerMinBatteryPercent = 20;
+  uint8_t rainmakerDefaultedSleepMode = 0;
 
   ~CrossPointSettings() = default;
 
