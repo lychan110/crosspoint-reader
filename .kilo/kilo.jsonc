@@ -10,7 +10,18 @@
 			"dist/**",
 			".git/**"
 		]
-	}
+	},
+	"mcp": {
+		"sequential-thinking": {
+			"type": "local",
+			"enabled": true,
+			"command": "npx",
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-sequential-thinking"
+			]
+		}
+	},
 	"permission": {
 		"grep *": "deny",
 		"glob *": "deny",
