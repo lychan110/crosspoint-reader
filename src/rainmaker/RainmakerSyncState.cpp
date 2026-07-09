@@ -43,7 +43,7 @@ bool loadState(RainmakerSyncState& state) {
   JsonDocument doc;
   const auto err = deserializeJson(doc, json.c_str(), json.length());
   if (err) {
-    LOG_WRN("RMK", "state json parse failed: %s", err.c_str());
+    LOG_INF("RMK", "state json parse failed: %s", err.c_str());
     return false;
   }
 

@@ -2,7 +2,7 @@
 
 #include <HalPowerManager.h>
 #include <HalStorage.h>
-#include <HttpDownloader.h>
+#include "network/HttpDownloader.h"
 #include <Logging.h>
 #include <WiFi.h>
 

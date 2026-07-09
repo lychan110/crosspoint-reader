@@ -28,7 +28,7 @@ void renderSleepScreen(GfxRenderer& renderer) {
 
   HalFile file;
   if (!Storage.openFileForRead("RMK", RainmakerSyncState::CACHE_BMP, file)) {
-    LOG_WRN("RMK", "failed to open cached dashboard");
+    LOG_INF("RMK", "failed to open cached dashboard");
     return renderMissingDashboard(renderer);
   }
 
@@ -37,7 +37,7 @@ void renderSleepScreen(GfxRenderer& renderer) {
   // produces that format.
   Bitmap bitmap(file, true);
   if (bitmap.parseHeaders() != BmpReaderError::Ok) {
-    LOG_WRN("RMK", "cached dashboard header parse failed");
+    LOG_INF("RMK", "cached dashboard header parse failed");
     file.close();
     return renderMissingDashboard(renderer);
   }
