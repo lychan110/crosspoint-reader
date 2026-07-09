@@ -36,6 +36,27 @@ git push --force-with-lease origin rainmaker-sync
 
 Keep Rainmaker work out of CrossPoint except firmware client logic. Do not vendor Rainmaker into the firmware repo.
 
+### Build Configuration for X4
+
+The X4 uses ESP32-C3, not ESP32-S3. Target `esp32-c3-devkitm-1` in `platformio.ini`. Builds produce `update.bin` for OTA partition flashing via the web flasher at https://crosspointreader.com/#flash-tools or SD card flashing.
+
+```ini
+[env:r4sync]
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip
+board = esp32-c3-devkitm-1
+framework = arduino
+build_flags =
+    -DFREEINK_DEVICE_X4=1
+    -DENABLE_RAINMAKER_SYNC
+```
+
+Flash methods (per [crosspointreader.com](https://crosspointreader.com/#flash-tools)):
+1. **Web flasher**: Chrome/Edge desktop, requires device at home screen
+2. **SD card**: Copy `update.bin` to SD root, hold power+up buttons at boot (recommended for all X3/X4 devices, including stock firmware)
+3. **International devices**: SD flashing recommended (USB flashing may be locked)
+
+After flashing, press Reset then hold power button 3-5 seconds to start the device.
+
 ## Rainmaker Endpoint Contract
 
 The VPS publishes static artifacts behind HTTPS Basic auth:
@@ -201,7 +222,7 @@ State fields:
 }
 ```
 
-If JSON parsing/writing is too heavy, use a simple binary struct or line-based key-value file. Keep it self-contained.
+**Storage implementation**: Use `Storage.openFileForRead/Write` via HalStorage (SdFat under the hood). Existing codebase uses JSON for settings (`settings.json` via `JsonSettingsIO`), but for Rainmaker state consider a simple line-based key-value text file to minimize RAM overhead during parsing. Binary struct serialization also viable. Keep writes atomic: close file before rename.
 
 ## Manifest Parser
 
@@ -289,29 +310,43 @@ Manual mode:
 
 ```text
 sync(mode):
-  validate settings
+  validate settings (non-empty URL, credentials for manual)
   if scheduled and low battery: return LowBattery
-  connect Wi-Fi using existing CrossPoint network mechanism
+  attempt WiFi connection using existing CrossPoint Wi-Fi mechanism
+  if WiFi fails to connect: return WifiFailed
   fetch manifest with HttpDownloader::fetchUrl(url, body, username, password)
+  if fetch failed: return ManifestFetchFailed
   parse and validate manifest
-  update cached solar times if present
+  if invalid: return ManifestInvalid
+  update cached solar times if present in manifest
   if manifest.sha256 == state.lastSha256 and cached BMP exists:
     save state and return Ok changed=false
-  download BMP to /.crosspoint/rainmaker/latest.tmp
-  verify byte count
-  compute sha256 over tmp
-  compare to manifest.sha256
-  rename tmp -> latest.bmp
+  download BMP to /.crosspoint/rainmaker/latest.tmp using HttpDownloader::downloadToFile
+  if download failed: return DownloadFailed
+  verify byte count matches manifest.bytes
+  compute sha256 over tmp file in chunks (1024-2048 byte buffer)
+  if hash mismatch: delete tmp, return HashMismatch
+  rename tmp -> latest.bmp (atomic replace)
   update state.lastSha256/sequence/updatedAt/solar times
-  save state
+  save state and disconnect WiFi
   return Ok changed=true
 ```
 
-Always close files before rename/remove. Always delete temp on failure.
+Always close files before rename/remove. Always delete temp on failure. On success, disconnect WiFi before returning.
+
+### WiFi Connection Strategy
+
+Re-use CrossPoint's existing Wi-Fi infrastructure:
+
+- For manual sync: Launch or integrate with `CrossPointWebServerActivity` to get Wi-Fi connected (user selects network if needed)
+- For timer-wake sync: Check if Wi-Fi auto-connects via stored `WIFI_STORE.getLastConnectedSsid()` and credentials (STA mode)
+- If no stored network or connection fails: log error, preserve cache, reschedule for next wake
+
+The firmware's existing `WifiSelectionActivity` auto-connects to the last used network on entry when `allowAutoConnect=true`. Timer-wake sync should follow the same pattern.
 
 ## SHA-256 Implementation
 
-Use ESP-IDF mbedTLS if available:
+Use ESP-IDF mbedTLS (already available in framework):
 
 ```cpp
 #include <mbedtls/sha256.h>
@@ -322,17 +357,19 @@ Pseudo-flow:
 ```cpp
 mbedtls_sha256_context ctx;
 mbedtls_sha256_init(&ctx);
-mbedtls_sha256_starts(&ctx, 0);
+mbedtls_sha256_starts_ret(&ctx, 0);  // Note: starts_ret returns esp_err_t
 while (read chunks from file) {
   mbedtls_sha256_update(&ctx, buffer, len);
 }
 uint8_t digest[32];
-mbedtls_sha256_finish(&ctx, digest);
+mbedtls_sha256_finish_ret(&ctx, digest);  // Note: finish_ret returns esp_err_t
 mbedtls_sha256_free(&ctx);
 hexEncode(digest, outHex);
 ```
 
-Compare lowercase hex strings case-insensitively.
+Use mbedtls functions with `_ret` suffix (they return error codes). Buffer size: 1024-2048 bytes for file reads. Compare lowercase hex strings case-insensitively.
+
+**Memory note**: The ESP32-C3 has ~380KB RAM. SHA256 context + 2KB read buffer is acceptable during sync, but avoid persistent allocations.
 
 ## Schedule Logic
 
@@ -378,7 +415,7 @@ Recommended: if next interval would go past end, schedule next day start instead
 
 In `src/main.cpp`:
 
-- include `esp_sleep.h`
+- include `esp_sleep.h` (via `include/Arduino.h` or direct)
 - identify timer wake during setup:
 
 ```cpp
@@ -395,7 +432,7 @@ if (rainmakerTimerWake && SETTINGS.rainmakerSyncEnabled) {
 }
 ```
 
-Before deep sleep start, after power button wake has been armed:
+Before deep sleep start, after power button wake has been armed but BEFORE calling `enterDeepSleep()`:
 
 ```cpp
 if (SETTINGS.rainmakerSyncEnabled) {
@@ -405,6 +442,10 @@ if (SETTINGS.rainmakerSyncEnabled) {
   }
 }
 ```
+
+Call this AFTER Wi-Fi teardown in `enterDeepSleep()` to avoid modem power domain issues. The timer wake bit is set in the RTC registers and survives deep sleep.
+
+**Important**: The existing `enterDeepSleep()` calls `powerManager.startDeepSleep(gpio)` which handles GPIO wake setup. Timer wake is additive. Do not modify `HalPowerManager::startDeepSleep()` flow - just call `esp_sleep_enable_timer_wakeup()` before it.
 
 Do not remove existing power-button wake. Timer wake is additive.
 
@@ -455,7 +496,8 @@ Manual sync does not sleep automatically.
 
 - Add settings fields.
 - Add settings UI entries.
-- Build firmware.
+- Build firmware: `pio run -e r4sync` (produces `update.bin` in `.pio/build/r4sync/`).
+- Flash via SD card or web flasher per crosspointreader.com#flash-tools.
 - Confirm existing reader opens books and settings screen works.
 
 ### Milestone 2: Manual Manifest Fetch

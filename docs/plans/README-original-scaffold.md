@@ -1,6 +1,6 @@
 # CrossPoint Firmware Fork for Rainmaker X4 Sync
 
-This is a fork of the [CrossPoint Reader firmware](https://github.com/crosspoint-reader/crosspoint-reader) with minimal modifications that let an ESP32-based e-ink device (X4 / X3) pull a pre-rendered Rainmaker dashboard from a VPS and use it as a deterministic sleep screen — with no phone bridge.
+This is a fork of the [CrossPoint Reader firmware](https://github.com/crosspoint-reader/crosspoint-reader) with minimal modifications that let an ESP32-based e-ink device (X4 / X3) pull a pre-rendered Rainmaker dashboard from a VPS and use it as a deterministic sleep screen - with no phone bridge.
 
 All Rainmaker work lives on a single topic branch (`rainmaker-sync`) for painless rebases onto upstream `develop`. CrossPoint's own rendering pipeline, books, and settings UI stay untouched. Rainmaker remains the canonical renderer and publisher; the firmware only consumes `manifest.json` + `latest.bmp`.
 
@@ -75,7 +75,7 @@ Appended to `CrossPointSettings` (do not insert enum values in the middle of any
 | `rainmakerManifestUrl` | char[160] | `""` | Full URL to `manifest.json` |
 | `rainmakerUsername` | char[48] | `""` | HTTPS Basic auth user |
 | `rainmakerPassword` | char[80] | `""` | HTTPS Basic auth password |
-| `rainmakerIntervalMinutes` | uint8_t | 30 | Sync interval, clamped to ≥5 |
+| `rainmakerIntervalMinutes` | uint8_t | 30 | Sync interval, clamped to >=5 |
 | `rainmakerStartMode` | uint8_t | 0 | `RAINMAKER_BOUND_FIXED=0`, `RAINMAKER_BOUND_SOLAR=1` |
 | `rainmakerEndMode` | uint8_t | 0 | `RAINMAKER_BOUND_FIXED=0`, `RAINMAKER_BOUND_SOLAR=1` |
 | `rainmakerStartMinutes` | uint16_t | 480 (08:00) | Local minutes from midnight |
@@ -87,7 +87,7 @@ First-time enable auto-defaults `sleepScreen` to `RAINMAKER` if the user hasn't 
 
 A new `RAINMAKER` value is appended to the existing sleep-screen enum. Existing values are not renumbered.
 
-Settings UI entries: enable toggle, manifest URL, username, password, interval (5–180), start/end mode, start/end minutes, minimum battery, and a **Sync dashboard now** manual action (or a home-menu entry if the settings framework can't host an action row).
+Settings UI entries: enable toggle, manifest URL, username, password, interval (5-180), start/end mode, start/end minutes, minimum battery, and a **Sync dashboard now** manual action (or a home-menu entry if the settings framework can't host an action row).
 
 ## Manifest Schema
 
@@ -117,7 +117,7 @@ The firmware expects `manifest.json` with this shape:
 - `sha256`, `bytes`, `width`, `height`, `bmpUrl` are required
 - For X4, `width === 480` and `height === 800`
 - `sha256` is **lowercase hex**, exactly 64 characters
-- `bmpUrl` is used as-is — no string concatenation
+- `bmpUrl` is used as-is - no string concatenation
 - Downloaded BMP is verified against `sha256` and `bytes` **before** replacing the cache
 - `sunriseLocalMinutes` / `sunsetLocalMinutes` are optional (sentinel `-1` when absent)
 
@@ -145,10 +145,15 @@ sync(mode):
 
 Temp files are always closed before rename/remove. Failures leave the existing cache intact.
 
-### Sync modes
+### WiFi Connection Strategy
 
-- **Scheduled** — skips on disabled, missing config, or low battery; never forces a UI redraw; preserves old cache on failure
-- **Manual** — ignores the low-battery guard (warns if the UI supports it); shows progress; returns to the previous screen
+Re-use CrossPoint's existing Wi-Fi infrastructure:
+
+- Manual sync: user connects via `CrossPointWebServerActivity` (select network, connect) first. Then trigger sync.
+- Timer-wake sync: auto-connect to last stored network via `WIFI_STORE.getLastConnectedSsid()` if available (STA mode)
+- If connection fails: log error, preserve cache, reschedule for next wake
+
+The firmware's `WifiSelectionActivity` auto-connects to the last used network on entry when `allowAutoConnect=true`. Timer-wake sync should follow the same pattern.
 
 ## Schedule Logic
 
@@ -163,7 +168,7 @@ Rules:
 
 1. Start = fixed value unless start mode is `SOLAR` and cached sunrise is valid
 2. End = fixed value unless end mode is `SOLAR` and cached sunset is valid
-3. If `start >= end`, fall back to 08:00–22:00
+3. If `start >= end`, fall back to 08:00-22:00
 4. If `now < start`, delay until start
 5. If `start <= now < end`, delay by interval (don't punch past end)
 6. If `now >= end`, delay until tomorrow's start
@@ -175,11 +180,19 @@ If the next interval would cross the end boundary, prefer tomorrow's start over 
 
 `src/main.cpp` changes only:
 
-- Include `esp_sleep.h`
-- Detect timer wakeup at the top of `setup()`
+- Include `esp_sleep.h` (via Arduino.h)
+- Detect timer wakeup at the top of `setup()`:
+
+```cpp
+const bool rainmakerTimerWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+```
+
 - On timer wake with sync enabled: run `RainmakerSyncService::sync(Scheduled)`, then `enterDeepSleep(true)` and `return`
-- Before deep sleep: if sync enabled, call `esp_sleep_enable_timer_wakeup(delaySeconds * 1'000'000ULL)`
-- Power-button wake stays armed — timer wake is additive, never replaces it
+- Before deep sleep (after WiFi teardown): call `esp_sleep_enable_timer_wakeup(delaySeconds * 1000000ULL)` if sync enabled
+
+Power-button wake stays armed - timer wake is additive, never replaces it.
+
+**Important**: Call `esp_sleep_enable_timer_wakeup()` before `enterDeepSleep()` returns, but after WiFi teardown in the existing code. The existing `enterDeepSleep()` calls `powerManager.startDeepSleep(gpio)` which handles GPIO wake setup.
 
 ## Sleep Screen
 
@@ -190,7 +203,7 @@ When `SETTINGS.sleepScreen == RAINMAKER`:
 - The Rainmaker BMP never lands in `/.sleep` or any random-wallpaper directory
 - BMP render failures fall back safely
 
-Reuse CrossPoint's existing BMP draw utility if there is one; otherwise add only what 1-bit / 24-bit Rainmaker output needs.
+Reuse CrossPoint's existing BMP draw utility (see `SleepActivity::renderBitmapSleepScreen()` and `BmpViewerActivity`). The `Bitmap` class and `renderer.drawBitmap()` handle 1-bit BMP rendering. For grayscale support, use `renderer.displayGrayscaleBase()` and `renderer.copyGrayscaleLsbBuffers()`/`renderer.copyGrayscaleMsbBuffers()` patterns already in `SleepActivity`.
 
 ## Manual Sync UI
 
@@ -198,9 +211,9 @@ One entry: **Sync Rainmaker dashboard**.
 
 Flow:
 
-1. Connecting Wi-Fi…
-2. Fetching manifest…
-3. Downloading dashboard… (only if changed)
+1. Connecting Wi-Fi...
+2. Fetching manifest...
+3. Downloading dashboard... (only if changed)
 4. Result: `Dashboard updated` / `Dashboard already current` / specific failure
 5. Return to the previous screen
 
@@ -211,8 +224,16 @@ Manual sync never sleeps the device automatically.
 ### Prerequisites
 
 - PlatformIO Core or PlatformIO IDE
-- ESP32-S3 dev board (X4) or ESP32 (X3)
-- USB cable for flashing
+- Xteink X3 or X4 e-reader (ESP32-C3, not ESP32-S3)
+- USB cable for flashing OR SD card for SD-flashing method
+
+### Flash Methods (per crosspointreader.com#flash-tools)
+
+1. **Web flasher**: Chrome/Edge on desktop, device at home screen
+2. **SD card (recommended)**: Copy `update.bin` to SD root (no extension), hold power+up at boot
+3. **International locked devices**: SD flashing required (USB flashing disabled)
+
+After flashing: Press Reset, then hold power 3-5s to start.
 
 ### Build
 
@@ -221,32 +242,35 @@ git clone <repo-url>
 cd crosspoint-rainmaker
 git checkout rainmaker-sync
 pio run                  # build
-pio run --target upload  # flash
+pio run --target upload  # flash via USB (may be locked on some devices)
 pio device monitor       # serial log
 ```
 
-### `platformio.ini` (X4 env)
+The built `update.bin` is flashed to the OTA partition, supporting fail-safe dual-bank OTA.
+
+### `platformio.ini` (X4 env, extends base profile)
 
 ```ini
-[env:x4]
-platform = espressif32
-board = esp32-s3-devkitc-1
-framework = arduino
+[env:r4sync]
+extends = base
 build_flags =
-    -D X4_TARGET
-    -D ENABLE_RAINMAKER_SYNC
+    ${base.build_flags}
+    -DFREEINK_DEVICE_X4=1
+    -DENABLE_RAINMAKER_SYNC
 ```
+
+Note: The base profile already enables `-fno-exceptions`. Do not add `-fexceptions` or `-fpermissive` as these increase binary size and may cause stack overflow on constrained ESP32-C3.
 
 ## Build Milestones
 
-Incremental — each milestone is independently testable:
+Incremental - each milestone is independently testable:
 
-1. **Compile-only settings** — add fields, add UI entries, build, confirm existing reader still opens books
-2. **Manual manifest fetch** — parser + `sync(Manual)` with manifest only; log the result
-3. **BMP download + verify** — temp file, byte/SHA-256 check, atomic replace, cache survives reboot
-4. **Rainmaker sleep mode** — `RAINMAKER` enum value + draw cached BMP, confirm override back to other modes
-5. **Timer wake** — `esp_sleep_enable_timer_wakeup`, test with a temporary 2-minute interval, confirm power-button wake still works
-6. **Full schedule + solar + battery guard** — fixed/solar bounds, cached solar times, low-battery skip, manual sync still runs
+1. **Compile-only settings** - add fields, add UI entries, build, confirm existing reader still opens books
+2. **Manual manifest fetch** - parser + `sync(Manual)` with manifest only; log the result
+3. **BMP download + verify** - temp file, byte/SHA-256 check, atomic replace, cache survives reboot
+4. **Rainmaker sleep mode** - `RAINMAKER` enum value + draw cached BMP, confirm override back to other modes
+5. **Timer wake** - `esp_sleep_enable_timer_wakeup`, test with a temporary 2-minute interval, confirm power-button wake still works
+6. **Full schedule + solar + battery guard** - fixed/solar bounds, cached solar times, low-battery skip, manual sync still runs
 
 ## Test Matrix
 
@@ -260,8 +284,8 @@ Incremental — each milestone is independently testable:
 
 ### Failure paths
 
-- Manifest fetch fails → state records `lastError`, cache preserved
-- Manifest invalid (bad version, missing field, bad dimensions, non-hex SHA-256) → `ManifestInvalid`, no download
-- BMP download truncates → byte-count mismatch, `DownloadFailed`, no replace
-- SHA-256 mismatch → `HashMismatch`, tmp deleted, cache preserved
-- Scheduled run below battery threshold → `LowBattery`, no Wi-Fi attempt
+- Manifest fetch fails - state records `lastError`, cache preserved
+- Manifest invalid (bad version, missing field, bad dimensions, non-hex SHA-256) - `ManifestInvalid`, no download
+- BMP download truncates - byte-count mismatch, `DownloadFailed`, no replace
+- SHA-256 mismatch - `HashMismatch`, tmp deleted, cache preserved
+- Scheduled run below battery threshold - `LowBattery`, no Wi-Fi attempt
