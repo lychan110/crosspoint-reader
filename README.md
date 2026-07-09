@@ -78,7 +78,11 @@ src/
     ├── RainmakerSyncService.h/.cpp   # public sync() entry point
     ├── RainmakerSchedule.h/.cpp      # next-wake delay calculator
     ├── RainmakerSleepScreen.h/.cpp   # BMP draw on sleep
+    ├── RainmakerManualSyncActivity.h/.cpp  # user-facing "Sync now" activity
     └── Sha256.h/.cpp                 # SHA-256 over downloaded file
+
+bin/
+└── install-deps.sh                   # one-shot setup for PlatformIO + clang-format 21 + Python deps
 ```
 
 ## Runtime State
@@ -242,15 +246,52 @@ Manual sync never sleeps the device automatically.
 - ESP32-S3 dev board (X4) or ESP32 (X3)
 - USB cable for flashing
 
+### One-shot dependency install
+
+`bin/install-deps.sh` provisions everything needed to build and test the
+firmware: PlatformIO Core, the `clang-format` 21 toolchain (the apt version on
+Ubuntu 22.04 is too old), the Python helpers used by `scripts/gen_i18n.py` and
+`scripts/debugging_monitor.py`, and the `freeink-sdk` git submodule. The
+script is idempotent and pins versions known to build against this repo.
+
+```bash
+git clone https://github.com/lychan110/crosspoint-reader.git
+cd crosspoint-reader
+git checkout rainmaker-sync
+./bin/install-deps.sh
+```
+
+What it does:
+
+- `apt install`: `python3-pip`, `python3.10-venv`, `git`, `ca-certificates`
+- `pip install`: `platformio`, `clang-format>=21,<22`, `pyserial`,
+  `colorama`, `matplotlib`, `pyyaml`
+- Combines the system CA bundle with the cloudflare-container CA (needed in
+  sandboxed/cloudflared environments where `github.com` is reached through a
+  MITM proxy) and writes it under `$PLATFORMIO_CORE_DIR`
+- Runs `git submodule update --init --recursive` for `freeink-sdk`
+
+The script also prints a final `export PLATFORMIO_CORE_DIR=...` line — set it
+in your shell so PlatformIO writes its package cache into the repo (the
+default `~/.platformio` may be read-only in some environments).
+
 ### Build
 
 ```bash
 git clone https://github.com/lychan110/crosspoint-reader.git
 cd crosspoint-reader
 git checkout rainmaker-sync
-pio run                  # build
-pio run --target upload  # flash
-pio device monitor       # serial log
+./bin/install-deps.sh            # one-time setup
+pio run                          # build
+pio run --target upload          # flash
+pio device monitor               # serial log
+```
+
+### Contributor pre-PR checks
+
+```bash
+./bin/clang-format-fix
+pio run -e default
 ```
 
 ### `platformio.ini` (X4 env)
@@ -264,6 +305,24 @@ build_flags =
     -D X4_TARGET
     -D ENABLE_RAINMAKER_SYNC
 ```
+
+The fork's `platformio.ini` ships a working `default` env (the upstream
+C3/X3 build, unchanged) plus `gh_release` and `gh_release_rc` release
+environments — no Rainmaker-specific env is required because the feature
+is gated by the `rainmakerSyncEnabled` setting and the user can disable it
+from the device settings menu.
+
+### Debugging
+
+After flashing, capture detailed logs from the serial port:
+
+```bash
+python3 -m pip install pyserial colorama matplotlib   # already covered by install-deps.sh
+python3 scripts/debugging_monitor.py                   # Linux
+python3 scripts/debugging_monitor.py /dev/cu.usbmodem2101   # macOS
+```
+
+Minor adjustments may be required for Windows.
 
 ## Build Milestones
 
