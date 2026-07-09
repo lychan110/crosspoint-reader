@@ -28,6 +28,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    if git rev-parse --verify --quiet upstream/develop >/dev/null 2>&1; then
+      upstream_sha="$(git rev-parse upstream/develop)"
+      if [ "$local_sha" = "$upstream_sha" ]; then
+        echo "pre-push: allowing initial develop creation matching upstream/develop ($local_sha)" >&2
+        exit 0
+      fi
+    fi
     echo "refusing to push new branch 'develop' on $remote" >&2
     echo "develop is a mirror of upstream/develop. Create it with:" >&2
     echo "  git fetch upstream && git checkout -b develop upstream/develop" >&2
