@@ -11,6 +11,7 @@
 namespace rainmaker {
 
 namespace {
+// cppcheck-suppress constParameterReference
 void renderMissingDashboard(GfxRenderer& renderer) {
   const auto pageHeight = renderer.getScreenHeight();
   renderer.clearScreen();

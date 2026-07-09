@@ -77,6 +77,7 @@ bool Sha256::equalsHex(const char* a, const char* b) {
     const int ca = std::tolower(static_cast<unsigned char>(a[i]));
     const int cb = std::tolower(static_cast<unsigned char>(b[i]));
     if (ca != cb) return false;
+    // cppcheck-suppress knownConditionTrueFalse
     if (ca == '\0' || cb == '\0') return false;
   }
   return true;
