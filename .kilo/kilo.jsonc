@@ -20,6 +20,12 @@
 				"-y",
 				"@modelcontextprotocol/server-sequential-thinking"
 			]
+		},
+		"codebase-memory-mcp": {
+			"type": "local",
+			"enabled": true,
+			"command": "codebase-memory-mcp",
+			"args": []
 		}
 	},
 	"permission": {
