@@ -1,10 +1,5 @@
 # AGENTS.md
 
-Master agent guidance, identical across all of `lychan110`'s repos. Repo-specific context (project name, layout, shared library, project id for codebase-memory) lives in **CONTEXT.md** in the same directory.
-
-**Project name:** `<project-id>` — pass as `project="<project-id>"` on every codebase-memory-mcp call.
-
----
 Do NOT use grep, glob, file-search, or bash-based search as a primary search method.
 Always use `uv run` over `python` and `python3`, and `uv add` over `pip install`.
 
