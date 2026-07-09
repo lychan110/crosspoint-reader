@@ -1,11 +1,11 @@
 #pragma once
 
-#include "sha256_backend.h"
-
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+
+#include "sha256_backend.h"
 
 namespace rainmaker {
 namespace host {

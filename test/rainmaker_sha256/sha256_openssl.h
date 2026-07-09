@@ -1,10 +1,10 @@
 #pragma once
 
-#include "sha256_backend.h"
-
 #include <openssl/evp.h>
 
 #include <cstring>
+
+#include "sha256_backend.h"
 
 namespace rainmaker {
 namespace backend {
@@ -13,8 +13,7 @@ inline bool compute(const uint8_t* data, std::size_t len, uint8_t out[Sha256::DI
   EVP_MD_CTX* ctx = EVP_MD_CTX_new();
   if (!ctx) return false;
   bool ok = false;
-  if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) == 1 &&
-      EVP_DigestUpdate(ctx, data, len) == 1 &&
+  if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) == 1 && EVP_DigestUpdate(ctx, data, len) == 1 &&
       EVP_DigestFinal_ex(ctx, out, nullptr) == 1) {
     ok = true;
   }

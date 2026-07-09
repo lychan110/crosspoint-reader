@@ -3,8 +3,8 @@
 // it at link time, so an empty header is sufficient.
 #pragma once
 
-#include <cstdio>
 #include <cstdarg>
+#include <cstdio>
 
 // Minimal no-op shim that matches the macro surface the production code
 // expects. The host tests do not assert on log output, so all macros are
