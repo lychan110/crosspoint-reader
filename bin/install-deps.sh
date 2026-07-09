@@ -58,6 +58,7 @@ fi
 
 # 5. Sanity checks.
 clang-format --version | head -1
+pio pkg install --tool tool-scons@4.40801.0 >/dev/null 2>&1 && echo "tool-scons@4.40801.0: ok" || echo "warning: tool-scons install failed"
 pio --version
 python3 scripts/gen_i18n.py >/dev/null && echo "gen_i18n.py: ok"
 
