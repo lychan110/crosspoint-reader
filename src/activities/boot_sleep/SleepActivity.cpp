@@ -15,6 +15,7 @@
 #include "fontIds.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
+#include "rainmaker/RainmakerSleepScreen.h"
 
 void SleepActivity::onEnter() {
   Activity::onEnter();
@@ -50,6 +51,8 @@ void SleepActivity::onEnter() {
       } else {
         return renderCustomSleepScreen();
       }
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::RAINMAKER):
+      return rainmaker::renderSleepScreen(renderer);
     default:
       return renderDefaultSleepScreen();
   }
