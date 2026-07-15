@@ -2,14 +2,13 @@ name: Ntfy Alert
 
 on:
   push:
+    branches: [main]
   pull_request:
-    types: [opened, synchronize, closed]
+    types: [opened, closed]
   release:
-    types: [published, edited, deleted]
+    types: [published]
   issues:
     types: [opened, closed]
-  issue_comment:
-    types: [created]
 
 jobs:
   notify:
@@ -17,7 +16,7 @@ jobs:
     steps:
       - name: Send to ntfy
         env:
-          NTFY_TOPIC: "github-lychan-7e8fdfc5ff45"
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
@@ -32,12 +31,11 @@ jobs:
           RELEASE_NAME: ${{ github.event.release.name }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          # Auth header (optional — topic name alone is sufficient on ntfy.sh)
+          [ -z "$NTFY_TOPIC" ] && echo "No NTFY_TOPIC secret, skipping" && exit 0
+
           AUTH_FLAG=""
           [ -n "$NTFY_TOKEN" ] && AUTH_FLAG="-u :$NTFY_TOKEN"
 
-          # NOTE: All github.event.* values are passed via env: block above,
-          # not interpolated directly in run:. This prevents shell injection.
           build_msg() {
             local title="" body="" tags="" prio="default"
 
@@ -45,7 +43,6 @@ jobs:
               push)
                 title="🔀 Push → $REPO"
                 body="$ACTOR → $REF"
-                # head_commit.message is safe here — it's in an env var, not interpolated
                 [ -n "$COMMIT_MSG" ] && body="$body
           $(echo "$COMMIT_MSG" | head -1)"
                 tags="heavy_check_mark"
@@ -67,12 +64,6 @@ jobs:
                 body="#$ISSUE_NUM: $ISSUE_TITLE
           by $ACTOR"
                 tags="triangular_flag_on_post"
-                ;;
-              issue_comment)
-                title="💬 Comment → $REPO"
-                body="$ACTOR commented on #$ISSUE_NUM"
-                tags="speech_balloon"
-                prio="low"
                 ;;
               *)
                 title="📢 $EVENT → $REPO"
