@@ -1,17 +1,22 @@
 name: Ntfy Alert
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    types: [opened, closed]
+    types: [opened]
   release:
     types: [published]
   issues:
     types: [opened, closed]
+  issue_comment:
+    types: [created]
+  workflow_run:
+    types: [completed]
 
 jobs:
   notify:
+    # workflow_run fires for EVERY completed run incl. this workflow's own —
+    # skip self, notify on all others
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.name != 'Ntfy Alert'
     runs-on: ubuntu-latest
     steps:
       - name: Send to ntfy
@@ -27,6 +32,11 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           ISSUE_NUM: ${{ github.event.issue.number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_IS_PR: ${{ github.event.issue.pull_request != null }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_NAME: ${{ github.event.release.name }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
@@ -52,7 +62,6 @@ jobs:
                 body="#$PR_NUM: $PR_TITLE
           by $ACTOR"
                 tags="pull_request"
-                [ "$ACTION" = "closed" ] && tags="heavy_check_mark" && prio="low"
                 ;;
               release)
                 title="📦 Release $ACTION → $REPO"
@@ -64,6 +73,29 @@ jobs:
                 body="#$ISSUE_NUM: $ISSUE_TITLE
           by $ACTOR"
                 tags="triangular_flag_on_post"
+                ;;
+              issue_comment)
+                kind="issue"
+                [ "$ISSUE_IS_PR" = "true" ] && kind="PR"
+                title="💬 Comment on $kind → $REPO"
+                body="#$ISSUE_NUM by $ACTOR"
+                [ -n "$COMMENT_BODY" ] && body="$body
+          $(echo "$COMMENT_BODY" | head -1)"
+                tags="speech_balloon"
+                prio="low"
+                ;;
+              workflow_run)
+                title="⚙️ CI $WORKFLOW_CONCLUSION → $REPO"
+                body="$WORKFLOW_NAME on $WORKFLOW_BRANCH"
+                if [ "$WORKFLOW_CONCLUSION" = "success" ]; then
+                  tags="white_check_mark"
+                elif [ "$WORKFLOW_CONCLUSION" = "failure" ] || [ "$WORKFLOW_CONCLUSION" = "timed_out" ]; then
+                  tags="x"
+                  prio="high"
+                else
+                  tags="no_entry"
+                  prio="low"
+                fi
                 ;;
               *)
                 title="📢 $EVENT → $REPO"
