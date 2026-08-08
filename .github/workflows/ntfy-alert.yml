@@ -1,10 +1,8 @@
 name: Ntfy Alert
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    types: [opened, closed]
+    types: [opened]
   release:
     types: [published]
   issues:
@@ -62,7 +60,6 @@ jobs:
                 body="#$PR_NUM: $PR_TITLE
           by $ACTOR"
                 tags="pull_request"
-                [ "$ACTION" = "closed" ] && tags="heavy_check_mark" && prio="low"
                 ;;
               release)
                 title="📦 Release $ACTION → $REPO"
