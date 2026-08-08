@@ -83,11 +83,11 @@ jobs:
                 prio="low"
                 ;;
               workflow_run)
+                # Success is noise — only alert on failure/cancelled/etc.
+                [ "$WORKFLOW_CONCLUSION" = "success" ] && return 0
                 title="⚙️ CI $WORKFLOW_CONCLUSION → $REPO"
                 body="$WORKFLOW_NAME on $WORKFLOW_BRANCH"
-                if [ "$WORKFLOW_CONCLUSION" = "success" ]; then
-                  tags="white_check_mark"
-                elif [ "$WORKFLOW_CONCLUSION" = "failure" ] || [ "$WORKFLOW_CONCLUSION" = "timed_out" ]; then
+                if [ "$WORKFLOW_CONCLUSION" = "failure" ] || [ "$WORKFLOW_CONCLUSION" = "timed_out" ]; then
                   tags="x"
                   prio="high"
                 else
