@@ -57,6 +57,7 @@ jobs:
                 [ -n "$COMMIT_MSG" ] && body="$body
           $(echo "$COMMIT_MSG" | head -1)"
                 tags="heavy_check_mark"
+                prio="low"
                 ;;
               pull_request)
                 title="🔃 PR $ACTION → $REPO"
@@ -83,7 +84,6 @@ jobs:
                 [ -n "$COMMENT_BODY" ] && body="$body
           $(echo "$COMMENT_BODY" | head -1)"
                 tags="speech_balloon"
-                prio="low"
                 ;;
               workflow_run)
                 title="⚙️ CI $WORKFLOW_CONCLUSION → $REPO"
@@ -95,7 +95,6 @@ jobs:
                   prio="high"
                 else
                   tags="no_entry"
-                  prio="low"
                 fi
                 ;;
               *)
